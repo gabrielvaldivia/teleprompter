@@ -7,7 +7,6 @@ export default function Teleprompter() {
   const [speed, setSpeed] = useState(50);
   const [fontSize, setFontSize] = useState(48);
   const [showSettings, setShowSettings] = useState(false);
-  const [mirror, setMirror] = useState(false);
   const [lineHeight, setLineHeight] = useState(1.5);
   const [elapsedTime, setElapsedTime] = useState(0);
   
@@ -198,15 +197,6 @@ export default function Teleprompter() {
                 />
               </div>
 
-              <div className="flex items-center gap-3">
-                <input
-                  type="checkbox"
-                  checked={mirror}
-                  onChange={(e) => setMirror(e.target.checked)}
-                  className="w-5 h-5 accent-neutral-400"
-                />
-                <label className="text-neutral-300 font-bold">MIRROR MODE</label>
-              </div>
             </div>
 
             <button
@@ -223,7 +213,7 @@ export default function Teleprompter() {
         </div>
       )}
 
-      <div className="absolute bottom-0 left-0 right-0 bg-neutral-900 z-10 p-4 border-t border-neutral-700">
+      <div className="absolute bottom-0 left-0 right-0 bg-neutral-900 z-10 py-4 px-8 border-t border-neutral-700">
         <div className="flex items-center justify-between">
           <div className="text-neutral-400 font-mono text-lg">
             {speed}% • {fontSize}px
@@ -273,9 +263,6 @@ export default function Teleprompter() {
       <div
         ref={scrollRef}
         className="h-screen overflow-y-scroll scrollbar-hide pb-32"
-        style={{
-          transform: mirror ? 'scaleX(-1)' : 'none',
-        }}
       >
         <div className="max-w-4xl mx-auto px-8 pt-32">
           <div
@@ -283,7 +270,6 @@ export default function Teleprompter() {
             style={{
               fontSize: `${fontSize}px`,
               lineHeight: lineHeight,
-              transform: mirror ? 'scaleX(-1)' : 'none',
             }}
           >
             {content}
