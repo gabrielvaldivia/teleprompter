@@ -45,7 +45,10 @@ export default function Teleprompter() {
   const [content, setContent] = useState("");
   const [isPlaying, setIsPlaying] = useState(false);
   const [speed, setSpeed] = useState(50);
-  const [fontSize, setFontSize] = useState(24);
+  const [fontSize, setFontSize] = useState(
+    () =>
+      (typeof window !== "undefined" && window.innerWidth >= 768 ? 44 : 24),
+  );
   const [showSettings, setShowSettings] = useState(false);
   const [lineHeight, setLineHeight] = useState(1.5);
   const [elapsedTime, setElapsedTime] = useState(0);
@@ -365,21 +368,21 @@ export default function Teleprompter() {
         togglePlay();
       } else if (e.code === "Escape") {
         setShowSettings((prev) => !prev);
-      } else if (e.code === "ArrowLeft" && content) {
+      } else if (e.code === "ArrowLeft" && content && isPlaying) {
         e.preventDefault();
         setSpeed((prev) => Math.max(10, prev - 5));
-      } else if (e.code === "ArrowRight" && content) {
+      } else if (e.code === "ArrowRight" && content && isPlaying) {
         e.preventDefault();
         setSpeed((prev) => Math.min(200, prev + 5));
-      } else if (e.code === "ArrowUp" && content) {
+      } else if (e.code === "ArrowUp" && content && isPlaying) {
         e.preventDefault();
         setFontSize((prev) => Math.min(120, prev + 4));
-      } else if (e.code === "ArrowDown" && content) {
+      } else if (e.code === "ArrowDown" && content && isPlaying) {
         e.preventDefault();
         setFontSize((prev) => Math.max(24, prev - 4));
       }
     },
-    [content, togglePlay],
+    [content, isPlaying, togglePlay],
   );
 
   useEffect(() => {
@@ -465,13 +468,10 @@ export default function Teleprompter() {
                 )}
 
                 {mode === "voice" && (
-                  <div className="flex flex-col gap-2 md:flex-row md:gap-6 md:justify-between md:items-center">
-                    <label
-                      className="font-bold text-neutral-300 shrink-0"
-                      htmlFor="show-recognized-speech"
-                    >
+                  <div className="flex flex-row justify-between items-center gap-2 pt-3 md:gap-6">
+                    <span className="font-bold text-neutral-300 shrink-0">
                       TRANSCRIPT
-                    </label>
+                    </span>
                     <button
                       type="button"
                       id="show-recognized-speech"
