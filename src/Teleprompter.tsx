@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { Rabbit, Type } from "lucide-react";
 
 type Sentence = { raw: string; words: { text: string }[] };
 
@@ -64,6 +65,7 @@ export default function Teleprompter() {
   const spokenCountRef = useRef(0);
   const sentenceRefs = useRef<(HTMLSpanElement | null)[]>([]);
   const nextUnreadWordRef = useRef<HTMLSpanElement | null>(null);
+  const recognizedSpeechRef = useRef<HTMLDivElement | null>(null);
   const scriptWordsRef = useRef<string[]>([]);
   const sentenceEndGlobalIndexRef = useRef<number[]>([]);
 
@@ -140,7 +142,7 @@ export default function Teleprompter() {
   };
 
   useEffect(() => {
-    if (isPlaying && mode === "auto") {
+    if (isPlaying) {
       timerRef.current = setInterval(() => {
         setElapsedTime((prev) => prev + 1);
       }, 1000);
@@ -195,7 +197,7 @@ export default function Teleprompter() {
 
     const recognition = new SR() as SpeechRecognition;
     recognition.continuous = true;
-    recognition.interimResults = false;
+    recognition.interimResults = true;
     recognition.lang = "en-US";
     recognitionRef.current = recognition;
     fatalErrorRef.current = false;
@@ -213,6 +215,10 @@ export default function Teleprompter() {
         if (r.isFinal && r.length > 0) {
           fullTranscript += (r[0] as { transcript: string }).transcript + " ";
         }
+      }
+      const last = event.results[event.results.length - 1];
+      if (last && !last.isFinal && last.length > 0) {
+        fullTranscript += (last[0] as { transcript: string }).transcript;
       }
       const text = fullTranscript.trim();
       setRecognizedTranscript(text);
@@ -340,6 +346,11 @@ export default function Teleprompter() {
     });
     return () => cancelAnimationFrame(timer);
   }, [mode, spokenWordCount, flatWords.length]);
+
+  useEffect(() => {
+    const el = recognizedSpeechRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [recognizedTranscript]);
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -638,21 +649,28 @@ export default function Teleprompter() {
       <div className="flex absolute right-0 bottom-0 left-0 z-10 flex-col">
         {mode === "voice" && showRecognizedSpeech && (
           <div className="px-4 py-2 border-t bg-neutral-800 border-neutral-700">
-            <div className="mb-1 font-mono text-xs tracking-wider uppercase text-neutral-500">
-              Recognized speech
-            </div>
-            <div className="text-neutral-200 font-mono text-sm min-h-[1.5rem] break-words">
+            <div
+              ref={recognizedSpeechRef}
+              className="overflow-y-auto text-neutral-200 font-mono text-sm min-h-[1.5rem] max-h-[2.8rem] break-words"
+            >
               {recognizedTranscript || "—"}
             </div>
           </div>
         )}
-        <div className="px-8 py-4 border-t bg-neutral-900 border-neutral-700">
+        <div className="relative px-8 py-9 border-t bg-neutral-900 border-neutral-700">
           <div className="flex justify-between items-center">
-            <div className="font-mono text-lg text-neutral-400">
-              {speed}% • {fontSize}px
+            <div className="flex shrink-0 gap-8 font-mono text-lg text-neutral-400 w-52 tabular-nums">
+              <span className="flex gap-1.5 items-center w-[4.5rem]">
+                <Rabbit className="shrink-0 text-neutral-500" size={20} aria-hidden />
+                {speed}%
+              </span>
+              <span className="flex gap-1.5 items-center w-[5rem]">
+                <Type className="shrink-0 text-neutral-500" size={20} aria-hidden />
+                {fontSize}px
+              </span>
             </div>
 
-            <div className="flex gap-4 items-center">
+            <div className="absolute left-1/2 top-1/2 flex gap-4 items-center -translate-x-1/2 -translate-y-1/2">
               <button
                 onClick={reset}
                 className="flex justify-center items-center w-16 h-16 text-xl font-bold bg-neutral-700 text-neutral-200 hover:bg-neutral-600"
@@ -707,7 +725,7 @@ export default function Teleprompter() {
               </button>
             </div>
 
-            <div className="font-mono text-lg text-neutral-400">
+            <div className="flex shrink-0 justify-end font-mono text-lg text-neutral-400 w-52 tabular-nums">
               {formatTime(elapsedTime)}
             </div>
           </div>
