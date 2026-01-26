@@ -45,11 +45,11 @@ export default function Teleprompter() {
   const [content, setContent] = useState("");
   const [isPlaying, setIsPlaying] = useState(false);
   const [speed, setSpeed] = useState(50);
-  const [fontSize, setFontSize] = useState(
-    () =>
-      (typeof window !== "undefined" && window.innerWidth >= 768 ? 44 : 24),
+  const [fontSize, setFontSize] = useState(() =>
+    typeof window !== "undefined" && window.innerWidth >= 768 ? 44 : 24,
   );
   const [showSettings, setShowSettings] = useState(false);
+  const [fontFamily, setFontFamily] = useState<"sans" | "serif" | "mono">("sans");
   const [lineHeight, setLineHeight] = useState(1.5);
   const [elapsedTime, setElapsedTime] = useState(0);
   const [mode, setMode] = useState<"auto" | "voice">("auto");
@@ -436,7 +436,7 @@ export default function Teleprompter() {
                     <label className="font-bold text-neutral-300 shrink-0">
                       MODE
                     </label>
-                    <span className="flex w-full md:w-auto gap-2 items-center">
+                    <span className="flex gap-2 items-center w-full md:w-auto">
                       <button
                         type="button"
                         onClick={() => {
@@ -468,7 +468,7 @@ export default function Teleprompter() {
                 )}
 
                 {mode === "voice" && (
-                  <div className="flex flex-row justify-between items-center gap-2 pt-3 md:gap-6">
+                  <div className="flex flex-row gap-2 justify-between items-center pt-3 md:gap-6">
                     <span className="font-bold text-neutral-300 shrink-0">
                       TRANSCRIPT
                     </span>
@@ -492,7 +492,7 @@ export default function Teleprompter() {
                     SPEED
                   </label>
                   <div
-                    className="flex flex-row-reverse md:flex-row w-full md:flex-1 md:min-w-0 md:max-w-xs items-center"
+                    className="flex flex-row-reverse items-center w-full md:flex-row md:flex-1 md:min-w-0 md:max-w-xs"
                     style={{ gap: 10 }}
                   >
                     <span className="w-14 tabular-nums text-right text-neutral-300 shrink-0">
@@ -511,11 +511,29 @@ export default function Teleprompter() {
                 </div>
 
                 <div className="flex flex-col gap-2 md:flex-row md:gap-6 md:justify-between md:items-center">
+                  <label className="font-bold text-neutral-300 shrink-0">
+                    FONT
+                  </label>
+                  <span className="flex gap-2 items-center w-full md:w-auto">
+                    {(["sans", "serif", "mono"] as const).map((f) => (
+                      <button
+                        key={f}
+                        type="button"
+                        onClick={() => setFontFamily(f)}
+                        className={`flex-1 md:flex-initial px-4 py-2 text-sm font-bold capitalize ${fontFamily === f ? "bg-white text-black" : "bg-neutral-700 text-neutral-300 hover:bg-neutral-600"}`}
+                      >
+                        {f}
+                      </button>
+                    ))}
+                  </span>
+                </div>
+
+                <div className="flex flex-col gap-2 md:flex-row md:gap-6 md:justify-between md:items-center">
                   <label className="w-32 font-bold text-neutral-300 shrink-0">
                     FONT SIZE
                   </label>
                   <div
-                    className="flex flex-row-reverse md:flex-row w-full md:flex-1 md:min-w-0 md:max-w-xs items-center"
+                    className="flex flex-row-reverse items-center w-full md:flex-row md:flex-1 md:min-w-0 md:max-w-xs"
                     style={{ gap: 10 }}
                   >
                     <span className="w-14 tabular-nums text-right text-neutral-300 shrink-0">
@@ -538,7 +556,7 @@ export default function Teleprompter() {
                     LINE HEIGHT
                   </label>
                   <div
-                    className="flex flex-row-reverse md:flex-row w-full md:flex-1 md:min-w-0 md:max-w-xs items-center"
+                    className="flex flex-row-reverse items-center w-full md:flex-row md:flex-1 md:min-w-0 md:max-w-xs"
                     style={{ gap: 10 }}
                   >
                     <span className="w-14 tabular-nums text-right text-neutral-300 shrink-0">
@@ -557,11 +575,10 @@ export default function Teleprompter() {
                   </div>
                 </div>
               </div>
-
             </div>
           </div>
           <div className="px-8 py-6 text-sm text-center shrink-0 text-neutral-400">
-            <p className="hidden md:flex flex-wrap gap-y-2 gap-x-3 justify-center items-center">
+            <p className="hidden flex-wrap gap-y-2 gap-x-3 justify-center items-center md:flex">
               <span className="keycap">TAB</span>
               <span> PLAY/PAUSE </span>
               <span className="ml-6 keycap">ESC</span>
@@ -653,8 +670,8 @@ export default function Teleprompter() {
           </div>
         )}
         <div className="relative p-2.5 md:p-5 border-t bg-neutral-900 border-neutral-700">
-          <div className="flex justify-center md:justify-between items-center">
-            <div className="hidden md:flex gap-8 w-52 font-mono text-lg tabular-nums shrink-0 text-neutral-400">
+          <div className="flex justify-center items-center md:justify-between">
+            <div className="hidden gap-8 w-52 font-mono text-lg tabular-nums md:flex shrink-0 text-neutral-400">
               <span className="flex gap-1.5 items-center w-[4.5rem]">
                 <Rabbit
                   className="shrink-0 text-neutral-500"
@@ -715,8 +732,8 @@ export default function Teleprompter() {
 
               <button
                 onClick={() => setShowSettings(!showSettings)}
-className="flex justify-center items-center w-[44px] h-[44px] text-xl font-bold bg-neutral-700 text-neutral-200 hover:bg-neutral-600"
-                >
+                className="flex justify-center items-center w-[44px] h-[44px] text-xl font-bold bg-neutral-700 text-neutral-200 hover:bg-neutral-600"
+              >
                 <svg
                   width="24"
                   height="24"
@@ -728,7 +745,7 @@ className="flex justify-center items-center w-[44px] h-[44px] text-xl font-bold 
               </button>
             </div>
 
-            <div className="hidden md:flex justify-end w-52 font-mono text-lg tabular-nums shrink-0 text-neutral-400">
+            <div className="hidden justify-end w-52 font-mono text-lg tabular-nums md:flex shrink-0 text-neutral-400">
               {formatTime(elapsedTime)}
             </div>
           </div>
@@ -742,68 +759,68 @@ className="flex justify-center items-center w-[44px] h-[44px] text-xl font-bold 
           paddingBottom: `calc(8rem + ${mobileBottomInset}px)`,
         }}
       >
-        <div className="px-8 pt-8 md:pt-32 pb-32 mx-auto max-w-4xl">
+        <div className="px-8 pt-8 pb-32 mx-auto max-w-4xl md:pt-32">
           <div className="relative min-h-[50vh]">
             {/* When playing: visible read-only script (voice = word spans + fading + scroll; auto = plain scroll). When paused: invisible ruler for layout. */}
             <div
-              className={`font-sans whitespace-pre-wrap text-neutral-100 ${!isPlaying ? "invisible pointer-events-none" : "select-none"}`}
+              className={`whitespace-pre-wrap text-neutral-100 ${fontFamily === "sans" ? "font-sans" : fontFamily === "serif" ? "font-serif" : "font-mono"} ${!isPlaying ? "invisible pointer-events-none" : "select-none"}`}
               style={{ fontSize: `${fontSize}px`, lineHeight }}
               aria-hidden={!isPlaying}
             >
-              {mode === "voice" && sentences.length > 0 ? (
-                sentences.map((sentence, si) => {
-                  let globalIdx = 0;
-                  for (let i = 0; i < si; i++)
-                    globalIdx += sentences[i].words.length;
-                  const tokens = sentence.raw.split(/(\s+)/);
-                  let wordIdx = 0;
-                  return (
-                    <span
-                      key={si}
-                      ref={(el) => {
-                        sentenceRefs.current[si] = el;
-                      }}
-                      style={{ display: "inline" }}
-                    >
-                      {tokens.map((token, ti) => {
-                        const isWord = /\S/.test(token);
-                        const g = globalIdx + wordIdx;
-                        if (isWord) wordIdx += 1;
-                        return isWord ? (
-                          <span
-                            key={`${si}-${ti}`}
-                            ref={
-                              g === spokenWordCount
-                                ? nextUnreadWordRef
-                                : undefined
-                            }
-                            style={
-                              isPlaying && mode === "voice" && g < spokenWordCount
-                                ? { opacity: 0.2 }
-                                : undefined
-                            }
-                            aria-hidden
-                          >
-                            {token}
-                          </span>
-                        ) : (
-                          <span key={`${si}-${ti}`}>{token}</span>
-                        );
-                      })}
-                      {separators[si] != null ? separators[si] : null}
-                    </span>
-                  );
-                })
-              ) : (
-                content || "\u00A0"
-              )}
+              {mode === "voice" && sentences.length > 0
+                ? sentences.map((sentence, si) => {
+                    let globalIdx = 0;
+                    for (let i = 0; i < si; i++)
+                      globalIdx += sentences[i].words.length;
+                    const tokens = sentence.raw.split(/(\s+)/);
+                    let wordIdx = 0;
+                    return (
+                      <span
+                        key={si}
+                        ref={(el) => {
+                          sentenceRefs.current[si] = el;
+                        }}
+                        style={{ display: "inline" }}
+                      >
+                        {tokens.map((token, ti) => {
+                          const isWord = /\S/.test(token);
+                          const g = globalIdx + wordIdx;
+                          if (isWord) wordIdx += 1;
+                          return isWord ? (
+                            <span
+                              key={`${si}-${ti}`}
+                              ref={
+                                g === spokenWordCount
+                                  ? nextUnreadWordRef
+                                  : undefined
+                              }
+                              style={
+                                isPlaying &&
+                                mode === "voice" &&
+                                g < spokenWordCount
+                                  ? { opacity: 0.2 }
+                                  : undefined
+                              }
+                              aria-hidden
+                            >
+                              {token}
+                            </span>
+                          ) : (
+                            <span key={`${si}-${ti}`}>{token}</span>
+                          );
+                        })}
+                        {separators[si] != null ? separators[si] : null}
+                      </span>
+                    );
+                  })
+                : content || "\u00A0"}
             </div>
             {!isPlaying && (
               <textarea
                 value={content}
                 onChange={(e) => setContent(e.target.value)}
                 placeholder="Enter or paste your script here..."
-                className="absolute inset-0 w-full min-h-full resize-none border-0 bg-transparent font-sans whitespace-pre-wrap text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-0 overflow-hidden"
+                className={`overflow-hidden absolute inset-0 w-full min-h-full whitespace-pre-wrap bg-transparent border-0 resize-none text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-0 ${fontFamily === "sans" ? "font-sans" : fontFamily === "serif" ? "font-serif" : "font-mono"}`}
                 style={{
                   fontSize: `${fontSize}px`,
                   lineHeight,
