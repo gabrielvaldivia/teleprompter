@@ -43,7 +43,6 @@ const VOICE_MAX_ADVANCE_PER_RESULT = 20;
 
 export default function Teleprompter() {
   const [content, setContent] = useState("");
-  const [textInput, setTextInput] = useState("");
   const [isPlaying, setIsPlaying] = useState(false);
   const [speed, setSpeed] = useState(50);
   const [fontSize, setFontSize] = useState(48);
@@ -360,7 +359,7 @@ export default function Teleprompter() {
 
   const handleKeyPress = useCallback(
     (e: KeyboardEvent) => {
-      if (e.code === "Space" && content) {
+      if (e.code === "Tab" && content) {
         e.preventDefault();
         togglePlay();
       } else if (e.code === "Escape") {
@@ -388,100 +387,6 @@ export default function Teleprompter() {
       window.removeEventListener("keydown", handleKeyPress as EventListener);
   }, [handleKeyPress]);
 
-  const loadContent = () => {
-    if (textInput.trim()) {
-      setContent(textInput);
-      spokenCountRef.current = 0;
-      setSpokenWordCount(0);
-      setShowSettings(false);
-    }
-  };
-
-  if (!content) {
-    return (
-      <div className="flex justify-center items-center p-8 min-h-screen bg-neutral-900">
-        <div className="w-full max-w-4xl">
-          <h1 className="mb-8 text-4xl font-bold text-center text-neutral-100">
-            TELEPROMPTER
-          </h1>
-
-          <textarea
-            value={textInput}
-            onChange={(e) => setTextInput(e.target.value)}
-            placeholder="Paste your text here..."
-            className="px-4 py-3 w-full h-96 text-lg border resize-none bg-neutral-700 text-neutral-100 placeholder-neutral-400 border-neutral-600 focus:outline-none focus:border-neutral-400"
-          />
-
-          <button
-            onClick={loadContent}
-            disabled={!textInput.trim()}
-            className="py-4 mt-4 w-full font-bold text-black bg-white disabled:opacity-30 disabled:bg-neutral-600 hover:bg-neutral-100"
-          >
-            START
-          </button>
-
-          <div className="mt-8 text-sm text-center text-neutral-400">
-            <p className="flex flex-wrap gap-y-2 gap-x-3 justify-center items-center">
-              <span className="keycap">SPACE</span>
-              <span> PLAY/PAUSE </span>
-              <span className="ml-6 keycap">ESC</span>
-              <span> SETTINGS </span>
-              <span className="ml-6 keycap keycap--arrow" aria-label="Left">
-                <svg
-                  viewBox="0 0 12 12"
-                  className="keycap-arrow-svg"
-                  fill="currentColor"
-                >
-                  <polygon points="9,2 9,10 3,6" />
-                </svg>
-              </span>
-              <span className="keycap keycap--arrow" aria-label="Right">
-                <svg
-                  viewBox="0 0 12 12"
-                  className="keycap-arrow-svg"
-                  fill="currentColor"
-                >
-                  <polygon points="3,2 3,10 9,6" />
-                </svg>
-              </span>
-              <span> SPEED </span>
-              <span className="ml-6 keycap keycap--arrow" aria-label="Up">
-                <svg
-                  viewBox="0 0 12 12"
-                  className="keycap-arrow-svg"
-                  fill="currentColor"
-                >
-                  <polygon points="6,2 2,10 10,10" />
-                </svg>
-              </span>
-              <span className="keycap keycap--arrow" aria-label="Down">
-                <svg
-                  viewBox="0 0 12 12"
-                  className="keycap-arrow-svg"
-                  fill="currentColor"
-                >
-                  <polygon points="6,10 2,2 10,2" />
-                </svg>
-              </span>
-              <span> FONT SIZE</span>
-            </p>
-          </div>
-          <p className="mt-12 text-sm text-center text-neutral-500">
-            Created by{" "}
-            <a
-              href="https://gabrielvaldivia.com"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="underline text-neutral-400 hover:text-neutral-300"
-            >
-              Gabriel Valdivia
-            </a>
-          </p>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="overflow-hidden relative min-h-screen bg-black">
       {showSettings && (
@@ -500,11 +405,11 @@ export default function Teleprompter() {
             <div className="px-8 py-8 mx-auto space-y-6 max-w-4xl">
               <div className="space-y-6">
                 {VOICE_SUPPORTED && (
-                  <div className="flex gap-6 justify-between items-center">
+                  <div className="flex flex-col gap-2 md:flex-row md:gap-6 md:justify-between md:items-center">
                     <label className="font-bold text-neutral-300 shrink-0">
                       MODE
                     </label>
-                    <span className="flex gap-2 items-center">
+                    <span className="flex w-full md:w-auto gap-2 items-center">
                       <button
                         type="button"
                         onClick={() => {
@@ -513,7 +418,7 @@ export default function Teleprompter() {
                           setSpokenWordCount(0);
                           setRecognizedTranscript("");
                         }}
-                        className={`px-4 py-2 text-sm font-bold ${mode === "auto" ? "bg-white text-black" : "bg-neutral-700 text-neutral-300 hover:bg-neutral-600"}`}
+                        className={`flex-1 md:flex-initial px-4 py-2 text-sm font-bold ${mode === "auto" ? "bg-white text-black" : "bg-neutral-700 text-neutral-300 hover:bg-neutral-600"}`}
                       >
                         Auto
                       </button>
@@ -527,7 +432,7 @@ export default function Teleprompter() {
                           setRecognizedTranscript("");
                           setVoiceError(null);
                         }}
-                        className={`px-4 py-2 text-sm font-bold ${mode === "voice" ? "bg-white text-black" : "bg-neutral-700 text-neutral-300 hover:bg-neutral-600"}`}
+                        className={`flex-1 md:flex-initial px-4 py-2 text-sm font-bold ${mode === "voice" ? "bg-white text-black" : "bg-neutral-700 text-neutral-300 hover:bg-neutral-600"}`}
                       >
                         Voice
                       </button>
@@ -536,7 +441,7 @@ export default function Teleprompter() {
                 )}
 
                 {mode === "voice" && (
-                  <div className="flex gap-6 justify-between items-center">
+                  <div className="flex flex-col gap-2 md:flex-row md:gap-6 md:justify-between md:items-center">
                     <label
                       className="font-bold text-neutral-300 shrink-0"
                       htmlFor="show-recognized-speech"
@@ -558,12 +463,12 @@ export default function Teleprompter() {
                   </div>
                 )}
 
-                <div className="flex gap-6 justify-between items-center">
+                <div className="flex flex-col gap-2 md:flex-row md:gap-6 md:justify-between md:items-center">
                   <label className="w-32 font-bold text-neutral-300 shrink-0">
                     SPEED
                   </label>
                   <div
-                    className="flex flex-1 items-center min-w-0 max-w-xs"
+                    className="flex flex-row-reverse md:flex-row w-full md:flex-1 md:min-w-0 md:max-w-xs items-center"
                     style={{ gap: 10 }}
                   >
                     <span className="w-14 tabular-nums text-right text-neutral-300 shrink-0">
@@ -581,12 +486,12 @@ export default function Teleprompter() {
                   </div>
                 </div>
 
-                <div className="flex gap-6 justify-between items-center">
+                <div className="flex flex-col gap-2 md:flex-row md:gap-6 md:justify-between md:items-center">
                   <label className="w-32 font-bold text-neutral-300 shrink-0">
                     FONT SIZE
                   </label>
                   <div
-                    className="flex flex-1 items-center min-w-0 max-w-xs"
+                    className="flex flex-row-reverse md:flex-row w-full md:flex-1 md:min-w-0 md:max-w-xs items-center"
                     style={{ gap: 10 }}
                   >
                     <span className="w-14 tabular-nums text-right text-neutral-300 shrink-0">
@@ -604,12 +509,12 @@ export default function Teleprompter() {
                   </div>
                 </div>
 
-                <div className="flex gap-6 justify-between items-center">
+                <div className="flex flex-col gap-2 md:flex-row md:gap-6 md:justify-between md:items-center">
                   <label className="w-32 font-bold text-neutral-300 shrink-0">
                     LINE HEIGHT
                   </label>
                   <div
-                    className="flex flex-1 items-center min-w-0 max-w-xs"
+                    className="flex flex-row-reverse md:flex-row w-full md:flex-1 md:min-w-0 md:max-w-xs items-center"
                     style={{ gap: 10 }}
                   >
                     <span className="w-14 tabular-nums text-right text-neutral-300 shrink-0">
@@ -629,21 +534,11 @@ export default function Teleprompter() {
                 </div>
               </div>
 
-              <button
-                onClick={() => {
-                  setContent("");
-                  setTextInput("");
-                  setShowSettings(false);
-                }}
-                className="px-6 py-2 mt-4 font-bold bg-neutral-700 text-neutral-200 hover:bg-neutral-600"
-              >
-                NEW TEXT
-              </button>
             </div>
           </div>
           <div className="px-8 py-6 text-sm text-center shrink-0 text-neutral-400">
-            <p className="flex flex-wrap gap-y-2 gap-x-3 justify-center items-center">
-              <span className="keycap">SPACE</span>
+            <p className="hidden md:flex flex-wrap gap-y-2 gap-x-3 justify-center items-center">
+              <span className="keycap">TAB</span>
               <span> PLAY/PAUSE </span>
               <span className="ml-6 keycap">ESC</span>
               <span> SETTINGS </span>
@@ -725,9 +620,9 @@ export default function Teleprompter() {
             </div>
           </div>
         )}
-        <div className="relative px-8 py-9 border-t bg-neutral-900 border-neutral-700">
-          <div className="flex justify-between items-center">
-            <div className="flex gap-8 w-52 font-mono text-lg tabular-nums shrink-0 text-neutral-400">
+        <div className="relative p-2.5 md:p-5 border-t bg-neutral-900 border-neutral-700">
+          <div className="flex justify-center md:justify-between items-center">
+            <div className="hidden md:flex gap-8 w-52 font-mono text-lg tabular-nums shrink-0 text-neutral-400">
               <span className="flex gap-1.5 items-center w-[4.5rem]">
                 <Rabbit
                   className="shrink-0 text-neutral-500"
@@ -746,10 +641,10 @@ export default function Teleprompter() {
               </span>
             </div>
 
-            <div className="flex absolute top-1/2 left-1/2 gap-4 items-center -translate-x-1/2 -translate-y-1/2">
+            <div className="flex gap-4 items-center md:absolute md:top-1/2 md:left-1/2 md:-translate-x-1/2 md:-translate-y-1/2">
               <button
                 onClick={reset}
-                className="flex justify-center items-center w-16 h-16 text-xl font-bold bg-neutral-700 text-neutral-200 hover:bg-neutral-600"
+                className="flex justify-center items-center w-[44px] h-[44px] text-xl font-bold bg-neutral-700 text-neutral-200 hover:bg-neutral-600"
               >
                 <svg
                   width="24"
@@ -763,7 +658,7 @@ export default function Teleprompter() {
 
               <button
                 onClick={togglePlay}
-                className="flex justify-center items-center w-16 h-16 text-xl font-bold text-black bg-white hover:bg-neutral-200"
+                className="flex justify-center items-center w-[44px] h-[44px] text-xl font-bold text-black bg-white hover:bg-neutral-200"
               >
                 {isPlaying ? (
                   <svg
@@ -788,8 +683,8 @@ export default function Teleprompter() {
 
               <button
                 onClick={() => setShowSettings(!showSettings)}
-                className="flex justify-center items-center w-16 h-16 text-xl font-bold bg-neutral-700 text-neutral-200 hover:bg-neutral-600"
-              >
+className="flex justify-center items-center w-[44px] h-[44px] text-xl font-bold bg-neutral-700 text-neutral-200 hover:bg-neutral-600"
+                >
                 <svg
                   width="24"
                   height="24"
@@ -801,7 +696,7 @@ export default function Teleprompter() {
               </button>
             </div>
 
-            <div className="flex justify-end w-52 font-mono text-lg tabular-nums shrink-0 text-neutral-400">
+            <div className="hidden md:flex justify-end w-52 font-mono text-lg tabular-nums shrink-0 text-neutral-400">
               {formatTime(elapsedTime)}
             </div>
           </div>
@@ -812,17 +707,16 @@ export default function Teleprompter() {
         ref={scrollRef}
         className="overflow-y-scroll pb-32 h-screen scrollbar-hide"
       >
-        <div className="px-8 pt-32 mx-auto max-w-4xl">
-          <div
-            className="font-sans whitespace-pre-wrap text-neutral-100"
-            style={{
-              fontSize: `${fontSize}px`,
-              lineHeight: lineHeight,
-            }}
-          >
-            {mode === "voice" && sentences.length > 0 ? (
-              <>
-                {sentences.map((sentence, si) => {
+        <div className="px-8 pt-32 pb-32 mx-auto max-w-4xl">
+          <div className="relative min-h-[50vh]">
+            {/* When playing: visible read-only script (voice = word spans + fading + scroll; auto = plain scroll). When paused: invisible ruler for layout. */}
+            <div
+              className={`font-sans whitespace-pre-wrap text-neutral-100 ${!isPlaying ? "invisible pointer-events-none" : "select-none"}`}
+              style={{ fontSize: `${fontSize}px`, lineHeight }}
+              aria-hidden={!isPlaying}
+            >
+              {mode === "voice" && sentences.length > 0 ? (
+                sentences.map((sentence, si) => {
                   let globalIdx = 0;
                   for (let i = 0; i < si; i++)
                     globalIdx += sentences[i].words.length;
@@ -848,7 +742,11 @@ export default function Teleprompter() {
                                 ? nextUnreadWordRef
                                 : undefined
                             }
-                            style={{ opacity: g < spokenWordCount ? 0.2 : 1 }}
+                            style={
+                              isPlaying && mode === "voice" && g < spokenWordCount
+                                ? { opacity: 0.2 }
+                                : undefined
+                            }
                             aria-hidden
                           >
                             {token}
@@ -860,10 +758,24 @@ export default function Teleprompter() {
                       {separators[si] != null ? separators[si] : null}
                     </span>
                   );
-                })}
-              </>
-            ) : (
-              content
+                })
+              ) : (
+                content || "\u00A0"
+              )}
+            </div>
+            {!isPlaying && (
+              <textarea
+                value={content}
+                onChange={(e) => setContent(e.target.value)}
+                placeholder="Enter or paste your script here..."
+                className="absolute inset-0 w-full min-h-full resize-none border-0 bg-transparent font-sans whitespace-pre-wrap text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-0 overflow-hidden"
+                style={{
+                  fontSize: `${fontSize}px`,
+                  lineHeight,
+                }}
+                spellCheck={true}
+                aria-label="Teleprompter script"
+              />
             )}
           </div>
           {mode === "voice" && content && (
