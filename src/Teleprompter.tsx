@@ -420,7 +420,7 @@ export default function Teleprompter() {
             START
           </button>
 
-          <div className="mt-8 space-y-2 text-sm text-center text-neutral-400">
+          <div className="mt-8 text-sm text-center text-neutral-400">
             <p className="flex flex-wrap gap-y-2 gap-x-3 justify-center items-center">
               <span className="keycap">SPACE</span>
               <span> PLAY/PAUSE </span>
@@ -466,6 +466,17 @@ export default function Teleprompter() {
               <span> FONT SIZE</span>
             </p>
           </div>
+          <p className="mt-12 text-sm text-center text-neutral-500">
+            Created by{" "}
+            <a
+              href="https://gabrielvaldivia.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline text-neutral-400 hover:text-neutral-300"
+            >
+              Gabriel Valdivia
+            </a>
+          </p>
         </div>
       </div>
     );
@@ -630,6 +641,63 @@ export default function Teleprompter() {
               </button>
             </div>
           </div>
+          <div className="px-8 py-6 text-sm text-center shrink-0 text-neutral-400">
+            <p className="flex flex-wrap gap-y-2 gap-x-3 justify-center items-center">
+              <span className="keycap">SPACE</span>
+              <span> PLAY/PAUSE </span>
+              <span className="ml-6 keycap">ESC</span>
+              <span> SETTINGS </span>
+              <span className="ml-6 keycap keycap--arrow" aria-label="Left">
+                <svg
+                  viewBox="0 0 12 12"
+                  className="keycap-arrow-svg"
+                  fill="currentColor"
+                >
+                  <polygon points="9,2 9,10 3,6" />
+                </svg>
+              </span>
+              <span className="keycap keycap--arrow" aria-label="Right">
+                <svg
+                  viewBox="0 0 12 12"
+                  className="keycap-arrow-svg"
+                  fill="currentColor"
+                >
+                  <polygon points="3,2 3,10 9,6" />
+                </svg>
+              </span>
+              <span> SPEED </span>
+              <span className="ml-6 keycap keycap--arrow" aria-label="Up">
+                <svg
+                  viewBox="0 0 12 12"
+                  className="keycap-arrow-svg"
+                  fill="currentColor"
+                >
+                  <polygon points="6,2 2,10 10,10" />
+                </svg>
+              </span>
+              <span className="keycap keycap--arrow" aria-label="Down">
+                <svg
+                  viewBox="0 0 12 12"
+                  className="keycap-arrow-svg"
+                  fill="currentColor"
+                >
+                  <polygon points="6,10 2,2 10,2" />
+                </svg>
+              </span>
+              <span> FONT SIZE</span>
+            </p>
+            <p className="mt-[20px] text-neutral-500">
+              Created by{" "}
+              <a
+                href="https://gabrielvaldivia.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline text-neutral-400 hover:text-neutral-300"
+              >
+                Gabriel Valdivia
+              </a>
+            </p>
+          </div>
         </div>
       )}
 
@@ -659,18 +727,26 @@ export default function Teleprompter() {
         )}
         <div className="relative px-8 py-9 border-t bg-neutral-900 border-neutral-700">
           <div className="flex justify-between items-center">
-            <div className="flex shrink-0 gap-8 font-mono text-lg text-neutral-400 w-52 tabular-nums">
+            <div className="flex gap-8 w-52 font-mono text-lg tabular-nums shrink-0 text-neutral-400">
               <span className="flex gap-1.5 items-center w-[4.5rem]">
-                <Rabbit className="shrink-0 text-neutral-500" size={20} aria-hidden />
+                <Rabbit
+                  className="shrink-0 text-neutral-500"
+                  size={20}
+                  aria-hidden
+                />
                 {speed}%
               </span>
               <span className="flex gap-1.5 items-center w-[5rem]">
-                <Type className="shrink-0 text-neutral-500" size={20} aria-hidden />
+                <Type
+                  className="shrink-0 text-neutral-500"
+                  size={20}
+                  aria-hidden
+                />
                 {fontSize}px
               </span>
             </div>
 
-            <div className="absolute left-1/2 top-1/2 flex gap-4 items-center -translate-x-1/2 -translate-y-1/2">
+            <div className="flex absolute top-1/2 left-1/2 gap-4 items-center -translate-x-1/2 -translate-y-1/2">
               <button
                 onClick={reset}
                 className="flex justify-center items-center w-16 h-16 text-xl font-bold bg-neutral-700 text-neutral-200 hover:bg-neutral-600"
@@ -725,7 +801,7 @@ export default function Teleprompter() {
               </button>
             </div>
 
-            <div className="flex shrink-0 justify-end font-mono text-lg text-neutral-400 w-52 tabular-nums">
+            <div className="flex justify-end w-52 font-mono text-lg tabular-nums shrink-0 text-neutral-400">
               {formatTime(elapsedTime)}
             </div>
           </div>
