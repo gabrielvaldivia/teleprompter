@@ -45,7 +45,7 @@ export default function Teleprompter() {
   const [content, setContent] = useState("");
   const [isPlaying, setIsPlaying] = useState(false);
   const [speed, setSpeed] = useState(50);
-  const [fontSize, setFontSize] = useState(48);
+  const [fontSize, setFontSize] = useState(24);
   const [showSettings, setShowSettings] = useState(false);
   const [lineHeight, setLineHeight] = useState(1.5);
   const [elapsedTime, setElapsedTime] = useState(0);
@@ -707,7 +707,7 @@ className="flex justify-center items-center w-[44px] h-[44px] text-xl font-bold 
         ref={scrollRef}
         className="overflow-y-scroll pb-32 h-screen scrollbar-hide"
       >
-        <div className="px-8 pt-32 pb-32 mx-auto max-w-4xl">
+        <div className="px-8 pt-8 md:pt-32 pb-32 mx-auto max-w-4xl">
           <div className="relative min-h-[50vh]">
             {/* When playing: visible read-only script (voice = word spans + fading + scroll; auto = plain scroll). When paused: invisible ruler for layout. */}
             <div
