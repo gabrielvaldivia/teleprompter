@@ -54,6 +54,7 @@ export default function Teleprompter() {
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [recognizedTranscript, setRecognizedTranscript] = useState("");
   const [showRecognizedSpeech, setShowRecognizedSpeech] = useState(true);
+  const [mobileBottomInset, setMobileBottomInset] = useState(0);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -387,6 +388,29 @@ export default function Teleprompter() {
       window.removeEventListener("keydown", handleKeyPress as EventListener);
   }, [handleKeyPress]);
 
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const update = () => {
+      if (window.innerWidth >= 768) {
+        setMobileBottomInset(0);
+        return;
+      }
+      const bottom = window.innerHeight - (vv.offsetTop + vv.height);
+      const inset = Math.max(0, Math.min(120, Math.round(bottom)));
+      setMobileBottomInset(inset);
+    };
+    update();
+    vv.addEventListener("resize", update);
+    vv.addEventListener("scroll", update);
+    window.addEventListener("resize", update);
+    return () => {
+      vv.removeEventListener("resize", update);
+      vv.removeEventListener("scroll", update);
+      window.removeEventListener("resize", update);
+    };
+  }, []);
+
   return (
     <div className="overflow-hidden relative min-h-screen bg-black">
       {showSettings && (
@@ -609,7 +633,15 @@ export default function Teleprompter() {
         </div>
       )}
 
-      <div className="flex absolute right-0 bottom-0 left-0 z-10 flex-col">
+      <div
+        className="flex absolute right-0 bottom-0 left-0 z-10 flex-col"
+        style={{
+          paddingBottom:
+            mobileBottomInset > 0
+              ? `calc(${mobileBottomInset}px + env(safe-area-inset-bottom, 0px))`
+              : "env(safe-area-inset-bottom, 0px)",
+        }}
+      >
         {mode === "voice" && showRecognizedSpeech && (
           <div className="px-4 py-2 border-t bg-neutral-800 border-neutral-700">
             <div
@@ -705,7 +737,10 @@ className="flex justify-center items-center w-[44px] h-[44px] text-xl font-bold 
 
       <div
         ref={scrollRef}
-        className="overflow-y-scroll pb-32 h-screen scrollbar-hide"
+        className="overflow-y-scroll h-screen scrollbar-hide"
+        style={{
+          paddingBottom: `calc(8rem + ${mobileBottomInset}px)`,
+        }}
       >
         <div className="px-8 pt-8 md:pt-32 pb-32 mx-auto max-w-4xl">
           <div className="relative min-h-[50vh]">
