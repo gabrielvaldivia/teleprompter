@@ -1,4 +1,33 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+
+type Sentence = { raw: string; words: { text: string }[] };
+
+function parseContentToSentences(content: string): { sentences: Sentence[]; separators: string[] } {
+  const trimmed = content.trim();
+  if (!trimmed) return { sentences: [], separators: [] };
+  // Split on sentence-ending punctuation but capture the following whitespace (keeps \n, \n\n, etc.)
+  const parts = trimmed.split(/(?<=[.!?])(\s*)/);
+  const sentences: Sentence[] = [];
+  const separators: string[] = [];
+  for (let i = 0; i < parts.length; i++) {
+    if (i % 2 === 0 && parts[i].length > 0) {
+      const raw = parts[i];
+      const words = raw.split(/\s+/).filter(Boolean).map((text) => ({ text }));
+      sentences.push({ raw, words });
+    } else if (i % 2 === 1) {
+      separators.push(parts[i]);
+    }
+  }
+  return { sentences, separators };
+}
+
+function normalizeWord(w: string): string {
+  return w.toLowerCase().replace(/[^\w]/g, '');
+}
+
+const VOICE_SUPPORTED =
+  typeof window !== 'undefined' &&
+  (window.SpeechRecognition != null || window.webkitSpeechRecognition != null);
 
 export default function Teleprompter() {
   const [content, setContent] = useState('');
@@ -9,14 +38,52 @@ export default function Teleprompter() {
   const [showSettings, setShowSettings] = useState(false);
   const [lineHeight, setLineHeight] = useState(1.5);
   const [elapsedTime, setElapsedTime] = useState(0);
-  
+  const [mode, setMode] = useState<'auto' | 'voice'>('auto');
+  const [spokenWordCount, setSpokenWordCount] = useState(0);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+
   const scrollRef = useRef<HTMLDivElement>(null);
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const animationRef = useRef<number | null>(null);
   const lastTimeRef = useRef<number>(0);
+  const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const fatalErrorRef = useRef(false);
+  const sentenceRefs = useRef<(HTMLSpanElement | null)[]>([]);
+  const scriptWordsRef = useRef<string[]>([]);
+  const sentenceEndGlobalIndexRef = useRef<number[]>([]);
+
+  const { sentences, separators } = useMemo(() => parseContentToSentences(content), [content]);
+  const flatWords = useMemo(() => sentences.flatMap((s) => s.words.map((w) => w.text)), [sentences]);
+  const sentenceEndGlobalIndices = useMemo(() => {
+    const out: number[] = [];
+    let idx = 0;
+    for (const s of sentences) {
+      idx += s.words.length;
+      out.push(idx - 1);
+    }
+    return out;
+  }, [sentences]);
 
   useEffect(() => {
-    if (!isPlaying || !scrollRef.current) return;
+    scriptWordsRef.current = flatWords;
+    sentenceEndGlobalIndexRef.current = sentenceEndGlobalIndices;
+  }, [flatWords, sentenceEndGlobalIndices]);
+
+  const scrollToNextSentenceAfter = useCallback((globalWordIndex: number) => {
+    const ends = sentenceEndGlobalIndexRef.current;
+    const sentenceIndex = ends.findIndex((end) => end >= globalWordIndex);
+    if (sentenceIndex < 0) {
+      console.log('[Voice] scrollToNextSentenceAfter: no sentence for index', globalWordIndex);
+      return;
+    }
+    const nextIdx = sentenceIndex + 1;
+    const el = sentenceRefs.current[nextIdx];
+    console.log('[Voice] scrollToNextSentenceAfter', { globalWordIndex, sentenceIndex, nextIdx, hasElement: !!el });
+    el?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, []);
+
+  useEffect(() => {
+    if (mode !== 'auto' || !isPlaying || !scrollRef.current) return;
 
     const scroll = (timestamp: number) => {
       if (!lastTimeRef.current) lastTimeRef.current = timestamp;
@@ -38,25 +105,28 @@ export default function Teleprompter() {
         cancelAnimationFrame(animationRef.current);
       }
     };
-  }, [isPlaying, speed]);
+  }, [mode, isPlaying, speed]);
 
   const togglePlay = useCallback(() => {
     setIsPlaying(prev => {
       lastTimeRef.current = 0;
+      console.log('[Voice] togglePlay', { mode, wasPlaying: prev, willBePlaying: !prev });
       return !prev;
     });
-  }, []);
+  }, [mode]);
 
   const reset = () => {
     setIsPlaying(false);
     setElapsedTime(0);
+    setSpokenWordCount(0);
+    setVoiceError(null);
     if (scrollRef.current) {
       scrollRef.current.scrollTop = 0;
     }
   };
 
   useEffect(() => {
-    if (isPlaying) {
+    if (isPlaying && mode === 'auto') {
       timerRef.current = setInterval(() => {
         setElapsedTime(prev => prev + 1);
       }, 1000);
@@ -71,7 +141,127 @@ export default function Teleprompter() {
         clearInterval(timerRef.current);
       }
     };
-  }, [isPlaying]);
+  }, [isPlaying, mode]);
+
+  useEffect(() => {
+    console.log('[Voice] effect run', { mode, isPlaying, VOICE_SUPPORTED, flatWordsLength: flatWords.length });
+    if (mode !== 'voice' || !isPlaying || !VOICE_SUPPORTED || flatWords.length === 0) {
+      console.log('[Voice] skipping start — will stop if was running', { mode, isPlaying, VOICE_SUPPORTED, flatWordsLength: flatWords.length });
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch {
+          /* ignore */
+        }
+        recognitionRef.current = null;
+      }
+      return;
+    }
+
+    const SR = window.SpeechRecognition ?? window.webkitSpeechRecognition;
+    if (!SR) {
+      console.warn('[Voice] SpeechRecognition constructor not found');
+      return;
+    }
+
+    const recognition = new SR() as SpeechRecognition;
+    recognition.continuous = true;
+    recognition.interimResults = false;
+    recognition.lang = 'en-US';
+    recognitionRef.current = recognition;
+    fatalErrorRef.current = false;
+    console.log('[Voice] recognition created, starting…', { totalWords: flatWords.length, sentenceEnds: sentenceEndGlobalIndices });
+
+    recognition.onresult = (event: SpeechRecognitionEvent) => {
+      const scriptWords = scriptWordsRef.current;
+      if (scriptWords.length === 0) return;
+      let fullTranscript = '';
+      for (let i = 0; i < event.results.length; i++) {
+        const r = event.results[i];
+        if (r.isFinal && r.length > 0) {
+          fullTranscript += (r[0] as { transcript: string }).transcript + ' ';
+        }
+      }
+      const text = fullTranscript.trim();
+      if (!text) return;
+      const spoken = text.split(/\s+/).map((w) => normalizeWord(w)).filter(Boolean);
+      let idx = 0;
+      for (const word of spoken) {
+        if (idx >= scriptWords.length) break;
+        if (normalizeWord(scriptWords[idx]) === word) idx += 1;
+      }
+      const ends = sentenceEndGlobalIndexRef.current;
+      const isSentenceEnd = ends.indexOf(idx - 1) >= 0;
+      console.log('[Voice] onresult', {
+        transcript: text,
+        spokenTokens: spoken.length,
+        matchedWordCount: idx,
+        scriptWordsSample: scriptWords.slice(0, 8),
+        isSentenceEnd,
+      });
+      setSpokenWordCount((current) => {
+        if (idx > current && isSentenceEnd) {
+          console.log('[Voice] sentence complete, scrolling to next', { lastSpokenIndex: idx - 1 });
+          setTimeout(() => scrollToNextSentenceAfter(idx - 1), 50);
+        }
+        return idx;
+      });
+    };
+
+    recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
+      console.log('[Voice] onerror', { error: event.error, message: event.message });
+      if (event.error === 'not-allowed') {
+        setVoiceError('Microphone access denied');
+        setIsPlaying(false);
+      } else if (event.error === 'network') {
+        fatalErrorRef.current = true;
+        setVoiceError(
+          "Speech service unreachable. In Chrome this often means an ad blocker or privacy extension is blocking it. Try a private window, disable extensions, or use another browser (e.g. Safari uses on-device recognition)."
+        );
+        setIsPlaying(false);
+      } else if (event.error === 'no-speech') {
+        /* ignore — safe to restart on onend */
+      } else {
+        fatalErrorRef.current = true;
+        setVoiceError(event.error ?? 'Speech recognition error');
+        setIsPlaying(false);
+      }
+    };
+
+    recognition.onend = () => {
+      console.log('[Voice] onend', { stillActive: recognitionRef.current === recognition, hadFatalError: fatalErrorRef.current });
+      if (fatalErrorRef.current) return;
+      if (recognitionRef.current === recognition && mode === 'voice' && isPlaying) {
+        try {
+          recognition.start();
+          console.log('[Voice] restarted after onend');
+        } catch {
+          /* ignore */
+        }
+      }
+    };
+
+    setVoiceError(null);
+    try {
+      recognition.start();
+      console.log('[Voice] recognition.start() called');
+    } catch (e) {
+      console.error('[Voice] recognition.start() threw', e);
+      setVoiceError(e instanceof Error ? e.message : 'Could not start microphone');
+    }
+
+    return () => {
+      console.log('[Voice] cleanup — stopping recognition');
+      try {
+        recognition.stop();
+      } catch {
+        /* ignore */
+      }
+      if (recognitionRef.current === recognition) {
+        recognitionRef.current = null;
+      }
+    };
+  }, [mode, isPlaying, flatWords.length, scrollToNextSentenceAfter]);
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -108,6 +298,7 @@ export default function Teleprompter() {
   const loadContent = () => {
     if (textInput.trim()) {
       setContent(textInput);
+      setSpokenWordCount(0);
       setShowSettings(false);
     }
   };
@@ -157,6 +348,28 @@ export default function Teleprompter() {
             </div>
 
             <div className="space-y-6">
+              {VOICE_SUPPORTED && (
+                <div>
+                  <label className="block text-neutral-300 mb-2 font-bold">MODE</label>
+                  <span className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => { setMode('auto'); setSpokenWordCount(0); }}
+                      className={`px-4 py-2 text-sm font-bold ${mode === 'auto' ? 'bg-white text-black' : 'bg-neutral-700 text-neutral-300 hover:bg-neutral-600'}`}
+                    >
+                      Auto
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setMode('voice'); setIsPlaying(false); setSpokenWordCount(0); setVoiceError(null); }}
+                      className={`px-4 py-2 text-sm font-bold ${mode === 'voice' ? 'bg-white text-black' : 'bg-neutral-700 text-neutral-300 hover:bg-neutral-600'}`}
+                    >
+                      Voice
+                    </button>
+                  </span>
+                </div>
+              )}
+
               <div>
                 <label className="block text-neutral-300 mb-2 font-bold">SPEED: {speed}%</label>
                 <input
@@ -213,6 +426,13 @@ export default function Teleprompter() {
         </div>
       )}
 
+      {voiceError && (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 bg-red-900/90 text-white px-4 py-2 rounded font-medium text-sm flex items-center gap-2">
+          <span>{voiceError}</span>
+          <button type="button" onClick={() => setVoiceError(null)} aria-label="Dismiss">×</button>
+        </div>
+      )}
+
       <div className="absolute bottom-0 left-0 right-0 bg-neutral-900 z-10 py-4 px-8 border-t border-neutral-700">
         <div className="flex items-center justify-between">
           <div className="text-neutral-400 font-mono text-lg">
@@ -266,13 +486,51 @@ export default function Teleprompter() {
       >
         <div className="max-w-4xl mx-auto px-8 pt-32">
           <div
-            className="text-neutral-100 whitespace-pre-wrap"
+            className="text-neutral-100 whitespace-pre-wrap font-sans"
             style={{
               fontSize: `${fontSize}px`,
               lineHeight: lineHeight,
             }}
           >
-            {content}
+            {mode === 'voice' && sentences.length > 0 ? (
+              <>
+                {sentences.map((sentence, si) => {
+                  let globalIdx = 0;
+                  for (let i = 0; i < si; i++) globalIdx += sentences[i].words.length;
+                  const tokens = sentence.raw.split(/(\s+)/);
+                  let wordIdx = 0;
+                  return (
+                    <span
+                      key={si}
+                      ref={(el) => {
+                        sentenceRefs.current[si] = el;
+                      }}
+                      style={{ display: 'inline' }}
+                    >
+                      {tokens.map((token, ti) => {
+                        const isWord = /\S/.test(token);
+                        const g = globalIdx + wordIdx;
+                        if (isWord) wordIdx += 1;
+                        return isWord ? (
+                          <span
+                            key={`${si}-${ti}`}
+                            style={{ opacity: g < spokenWordCount ? 0.2 : 1 }}
+                            aria-hidden
+                          >
+                            {token}
+                          </span>
+                        ) : (
+                          <span key={`${si}-${ti}`}>{token}</span>
+                        );
+                      })}
+                      {separators[si] != null ? separators[si] : null}
+                    </span>
+                  );
+                })}
+              </>
+            ) : (
+              content
+            )}
           </div>
         </div>
       </div>

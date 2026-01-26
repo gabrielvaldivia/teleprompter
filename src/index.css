@@ -2,6 +2,12 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer base {
+  body {
+    font-family: "Berkeley Mono", "JetBrains Mono", ui-monospace, monospace;
+  }
+}
+
 .scrollbar-hide::-webkit-scrollbar {
   display: none;
 }
