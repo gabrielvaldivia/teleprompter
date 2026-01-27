@@ -199,75 +199,11 @@ function normalizeWord(w: string): string {
   return w.toLowerCase().replace(/[^\w]/g, "");
 }
 
-/**
- * Sequential tracking algorithm - follows along with speech rather than searching.
- * 
- * Strategy:
- * 1. Track a "lastMatchedSpokenIndex" to know which spoken words we've already processed
- * 2. For NEW spoken words only, try to match them sequentially to the script
- * 3. Allow small gaps (skipped words) but require sequential progress
- * 4. Only advance when we're confident - multiple matches in sequence
- */
-
-// Store the last processed spoken word count to detect new words
-let lastProcessedSpokenCount = 0;
-let accumulatedPosition = 0;
+// Track how many spoken words we've processed (for incremental matching)
+let lastProcessedWordCount = 0;
 
 function resetTrackingState() {
-  lastProcessedSpokenCount = 0;
-  accumulatedPosition = 0;
-}
-
-function findPositionSequential(
-  spokenWords: string[],
-  scriptWords: string[],
-  currentPosition: number
-): number {
-  if (spokenWords.length === 0 || scriptWords.length === 0) {
-    return currentPosition;
-  }
-
-  // Normalize all words
-  const normalizedScript = scriptWords.map(normalizeWord);
-  const normalizedSpoken = spokenWords.map(normalizeWord).filter(w => w.length > 0);
-  
-  // Start from current position in script
-  let scriptPos = currentPosition;
-  
-  // Maximum we can look ahead for any single word match (very small - just for minor variations)
-  const maxSkip = 3;
-  
-  // Process spoken words from where we last matched
-  // We try to align spoken words with script words sequentially
-  for (let spokenIdx = 0; spokenIdx < normalizedSpoken.length; spokenIdx++) {
-    const spokenWord = normalizedSpoken[spokenIdx];
-    
-    // Skip very short words or just check if they match at current position
-    if (spokenWord.length <= 2) {
-      // For short words, only advance if exact match at current position
-      if (scriptPos < normalizedScript.length && normalizedScript[scriptPos] === spokenWord) {
-        scriptPos++;
-      }
-      continue;
-    }
-    
-    // Look for this word within a small window ahead
-    let found = false;
-    for (let skip = 0; skip <= maxSkip && scriptPos + skip < normalizedScript.length; skip++) {
-      if (normalizedScript[scriptPos + skip] === spokenWord) {
-        // Found a match - advance to just after this word
-        scriptPos = scriptPos + skip + 1;
-        found = true;
-        break;
-      }
-    }
-    
-    // If not found in the small window, don't jump ahead - stay where we are
-    // This prevents the algorithm from jumping to a later occurrence of the word
-  }
-
-  // Ensure we never go backward
-  return Math.max(currentPosition, scriptPos);
+  lastProcessedWordCount = 0;
 }
 
 /** Check if we have a Deepgram API key configured (local dev) */
@@ -508,35 +444,48 @@ export default function Teleprompter() {
     };
   }, [isPlaying, mode]);
 
-  // Process transcript and update position
+  // Process transcript and update position using incremental matching
   const processTranscript = useCallback((transcript: string, isFinal: boolean) => {
     const scriptWords = scriptWordsRef.current;
-    if (scriptWords.length === 0) return;
-
     const spokenWords = transcript.split(/\s+/).filter(Boolean);
-    if (spokenWords.length === 0) return;
+    
+    if (scriptWords.length === 0 || spokenWords.length === 0) return;
+
+    // Normalize words for comparison
+    const normalizedScript = scriptWords.map(normalizeWord);
+    const normalizedSpoken = spokenWords.map(normalizeWord).filter(w => w.length > 0);
+    
+    // Only process NEW words since last call (prevents re-matching)
+    const newWordsStart = Math.min(lastProcessedWordCount, normalizedSpoken.length);
+    const newWords = normalizedSpoken.slice(newWordsStart);
+    lastProcessedWordCount = normalizedSpoken.length;
+    
+    if (newWords.length === 0) return;
 
     setSpokenWordCount((current) => {
-      const newPosition = findPositionSequential(
-        spokenWords,
-        scriptWords,
-        current,
-      );
+      let scriptPos = current;
+      const maxSkip = 4; // Only look 4 words ahead - prevents jumping
+      
+      // Process each new word
+      for (const spokenWord of newWords) {
+        if (spokenWord.length <= 1) continue;
+        
+        // Try to match within small window ahead
+        for (let skip = 0; skip <= maxSkip && scriptPos + skip < normalizedScript.length; skip++) {
+          if (normalizedScript[scriptPos + skip] === spokenWord) {
+            scriptPos = scriptPos + skip + 1;
+            break;
+          }
+        }
+        // If no match found, word is ignored (improvisation)
+      }
 
-      // For sequential tracking, we trust the algorithm more but still cap large jumps
+      // Cap large jumps per update
       const maxAdvance = isFinal ? VOICE_MAX_ADVANCE_PER_RESULT : 15;
-      const capped = Math.min(newPosition, current + maxAdvance);
-      spokenCountRef.current = capped;
-
-      console.log("[Voice] processTranscript", {
-        words: spokenWords.slice(-5).join(" "),
-        isFinal,
-        currentPos: current,
-        newPos: newPosition,
-        capped,
-      });
-
-      return capped;
+      const finalPosition = Math.min(scriptPos, current + maxAdvance);
+      
+      spokenCountRef.current = finalPosition;
+      return finalPosition;
     });
   }, []);
 
@@ -564,6 +513,9 @@ export default function Teleprompter() {
     let isActive = true;
 
     const startDeepgram = async () => {
+      // Reset tracking state for new session
+      resetTrackingState();
+      
       try {
         // Get Deepgram credentials - either from local env or API endpoint
         let apiKey = DEEPGRAM_API_KEY_LOCAL;
@@ -742,6 +694,9 @@ export default function Teleprompter() {
       return;
     }
 
+    // Reset tracking state for new session
+    resetTrackingState();
+    
     const recognition = new SR() as SpeechRecognition;
     recognition.continuous = true;
     recognition.interimResults = true;
@@ -1015,6 +970,7 @@ export default function Teleprompter() {
                           setSpokenWordCount(0);
                           setRecognizedTranscript("");
                           setVoiceError(null);
+                          resetTrackingState();
                         }}
                         className={`flex-1 md:flex-initial px-4 py-2 text-sm font-bold ${mode === "voice" ? "bg-white text-black" : "bg-neutral-700 text-neutral-300 hover:bg-neutral-600"}`}
                       >
