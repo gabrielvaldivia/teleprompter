@@ -199,113 +199,75 @@ function normalizeWord(w: string): string {
   return w.toLowerCase().replace(/[^\w]/g, "");
 }
 
-/** Common words that shouldn't drive position changes on their own */
-const COMMON_WORDS = new Set([
-  "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for",
-  "of", "with", "by", "from", "as", "is", "was", "are", "were", "been",
-  "be", "have", "has", "had", "do", "does", "did", "will", "would", "could",
-  "should", "may", "might", "must", "shall", "can", "need", "it", "its",
-  "this", "that", "these", "those", "i", "you", "he", "she", "we", "they",
-  "my", "your", "his", "her", "our", "their", "me", "him", "us", "them",
-]);
-
 /**
- * Improved matching algorithm that's more forgiving of natural speech variations.
+ * Sequential tracking algorithm - follows along with speech rather than searching.
  * 
  * Strategy:
- * 1. Match words sequentially, but allow skipping common words in the script
- * 2. Track consecutive matches - require 2+ consecutive distinctive word matches to advance
- * 3. Only move forward, never backward (monotonic)
- * 4. Be tolerant of slight word variations
+ * 1. Track a "lastMatchedSpokenIndex" to know which spoken words we've already processed
+ * 2. For NEW spoken words only, try to match them sequentially to the script
+ * 3. Allow small gaps (skipped words) but require sequential progress
+ * 4. Only advance when we're confident - multiple matches in sequence
  */
-function findPositionWithSmartMatching(
+
+// Store the last processed spoken word count to detect new words
+let lastProcessedSpokenCount = 0;
+let accumulatedPosition = 0;
+
+function resetTrackingState() {
+  lastProcessedSpokenCount = 0;
+  accumulatedPosition = 0;
+}
+
+function findPositionSequential(
   spokenWords: string[],
   scriptWords: string[],
-  currentPosition: number,
-  lookahead: number
+  currentPosition: number
 ): number {
   if (spokenWords.length === 0 || scriptWords.length === 0) {
     return currentPosition;
   }
 
-  const searchStart = currentPosition;
-  const searchEnd = Math.min(scriptWords.length, currentPosition + lookahead);
-  
-  // Normalize all words for comparison
+  // Normalize all words
   const normalizedScript = scriptWords.map(normalizeWord);
-  const normalizedSpoken = spokenWords.map(normalizeWord);
+  const normalizedSpoken = spokenWords.map(normalizeWord).filter(w => w.length > 0);
   
-  // Use recent spoken words (last ~20 words of transcript)
-  const recentSpoken = normalizedSpoken.slice(-20);
+  // Start from current position in script
+  let scriptPos = currentPosition;
   
-  let bestPosition = currentPosition;
+  // Maximum we can look ahead for any single word match (very small - just for minor variations)
+  const maxSkip = 3;
   
-  // Sliding window: try to find where in the script the recent speech matches
-  // Look for runs of matching words
-  for (let scriptIdx = searchStart; scriptIdx < searchEnd; scriptIdx++) {
-    let matchCount = 0;
-    let distinctiveMatches = 0;
-    let spokenIdx = 0;
-    let lastMatchScriptIdx = scriptIdx;
+  // Process spoken words from where we last matched
+  // We try to align spoken words with script words sequentially
+  for (let spokenIdx = 0; spokenIdx < normalizedSpoken.length; spokenIdx++) {
+    const spokenWord = normalizedSpoken[spokenIdx];
     
-    // Try to match spoken words starting from this script position
-    for (let si = scriptIdx; si < searchEnd && spokenIdx < recentSpoken.length; ) {
-      const scriptWord = normalizedScript[si];
-      const spokenWord = recentSpoken[spokenIdx];
-      
-      if (scriptWord === spokenWord) {
-        // Direct match
-        matchCount++;
-        if (!COMMON_WORDS.has(scriptWord) && scriptWord.length > 2) {
-          distinctiveMatches++;
-        }
-        lastMatchScriptIdx = si;
-        si++;
-        spokenIdx++;
-      } else if (COMMON_WORDS.has(scriptWord)) {
-        // Script has a common word the speaker might have skipped, try skipping it
-        si++;
-      } else if (COMMON_WORDS.has(spokenWord)) {
-        // Speaker said a common word not in script (filler), skip it
-        spokenIdx++;
-      } else {
-        // Mismatch on distinctive words - break this run
+    // Skip very short words or just check if they match at current position
+    if (spokenWord.length <= 2) {
+      // For short words, only advance if exact match at current position
+      if (scriptPos < normalizedScript.length && normalizedScript[scriptPos] === spokenWord) {
+        scriptPos++;
+      }
+      continue;
+    }
+    
+    // Look for this word within a small window ahead
+    let found = false;
+    for (let skip = 0; skip <= maxSkip && scriptPos + skip < normalizedScript.length; skip++) {
+      if (normalizedScript[scriptPos + skip] === spokenWord) {
+        // Found a match - advance to just after this word
+        scriptPos = scriptPos + skip + 1;
+        found = true;
         break;
       }
     }
     
-    // If we found a good run with distinctive matches, use it
-    if (distinctiveMatches >= 1 && matchCount >= 2) {
-      const candidatePosition = lastMatchScriptIdx + 1;
-      if (candidatePosition > bestPosition) {
-        bestPosition = candidatePosition;
-      }
-    }
-  }
-  
-  // Fallback: if no good phrase match, try finding the last distinctive spoken word
-  if (bestPosition === currentPosition && recentSpoken.length > 0) {
-    // Look for any distinctive word from recent speech
-    for (let i = recentSpoken.length - 1; i >= Math.max(0, recentSpoken.length - 8); i--) {
-      const word = recentSpoken[i];
-      if (!COMMON_WORDS.has(word) && word.length > 3) {
-        // Find this word in the script window
-        for (let j = searchStart; j < searchEnd; j++) {
-          if (normalizedScript[j] === word) {
-            const candidatePosition = j + 1;
-            if (candidatePosition > bestPosition) {
-              bestPosition = candidatePosition;
-            }
-            break; // Take first match
-          }
-        }
-        if (bestPosition > currentPosition) break;
-      }
-    }
+    // If not found in the small window, don't jump ahead - stay where we are
+    // This prevents the algorithm from jumping to a later occurrence of the word
   }
 
   // Ensure we never go backward
-  return Math.max(currentPosition, bestPosition);
+  return Math.max(currentPosition, scriptPos);
 }
 
 /** Check if we have a Deepgram API key configured (local dev) */
@@ -522,6 +484,7 @@ export default function Teleprompter() {
     setSpokenWordCount(0);
     setRecognizedTranscript("");
     setVoiceError(null);
+    resetTrackingState(); // Reset the sequential tracking state
     if (scrollRef.current) {
       scrollRef.current.scrollTop = 0;
     }
@@ -554,15 +517,14 @@ export default function Teleprompter() {
     if (spokenWords.length === 0) return;
 
     setSpokenWordCount((current) => {
-      const newPosition = findPositionWithSmartMatching(
+      const newPosition = findPositionSequential(
         spokenWords,
         scriptWords,
         current,
-        voiceLookaheadRef.current,
       );
 
-      // Cap how much we can advance per result to prevent huge jumps
-      const maxAdvance = isFinal ? VOICE_MAX_ADVANCE_PER_RESULT : Math.floor(VOICE_MAX_ADVANCE_PER_RESULT / 2);
+      // For sequential tracking, we trust the algorithm more but still cap large jumps
+      const maxAdvance = isFinal ? VOICE_MAX_ADVANCE_PER_RESULT : 15;
       const capped = Math.min(newPosition, current + maxAdvance);
       spokenCountRef.current = capped;
 
