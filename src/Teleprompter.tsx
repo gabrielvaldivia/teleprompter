@@ -586,8 +586,23 @@ export default function Teleprompter() {
           return { count: matches, endPos: lastMatchPos };
         };
 
-        // Check for BACKWARD match - look for consecutive sequence behind
-        if (newWords.length >= 2) {
+        // Check for BACKWARD match
+        // First: try single-word matching for long distinctive words
+        for (const word of newWords) {
+          if (word.length >= 6) { // Only match distinctive words (6+ chars)
+            const searchStart = Math.max(0, current - lookBehind);
+            // Look backwards from current position
+            for (let pos = current - 5; pos >= searchStart; pos--) {
+              if (normalizedScript[pos] === word) {
+                scriptPos = pos + 1;
+                break;
+              }
+            }
+          }
+        }
+
+        // Second: consecutive matching for more confident backward jumps
+        if (newWords.length >= 2 && scriptPos === current) {
           const searchStart = Math.max(0, current - lookBehind);
           let bestBackwardPos = -1;
           let bestBackwardMatches = 0;
@@ -606,14 +621,28 @@ export default function Teleprompter() {
           }
         }
 
-        // Check for FORWARD match - look for consecutive sequence ahead
+        // Check for FORWARD match
+        // First: try single-word matching for long distinctive words (immediate response)
+        for (const word of newWords) {
+          if (word.length >= 6) { // Only match distinctive words (6+ chars)
+            // Look in a larger window ahead to allow skipping sentences
+            for (let pos = scriptPos; pos < scriptPos + lookAhead && pos < normalizedScript.length; pos++) {
+              if (normalizedScript[pos] === word) {
+                scriptPos = pos + 1;
+                break;
+              }
+            }
+          }
+        }
+
+        // Second: consecutive matching for more confident jumps
         if (newWords.length >= 2) {
           let bestForwardPos = scriptPos;
           let bestForwardMatches = 0;
 
           for (let pos = scriptPos; pos < scriptPos + lookAhead && pos < normalizedScript.length; pos++) {
             const result = findConsecutiveMatches(0, pos, 2);
-            // Need 2+ consecutive matches to advance
+            // Need 2+ consecutive matches to advance further
             if (result.count >= 2 && result.count > bestForwardMatches) {
               bestForwardMatches = result.count;
               bestForwardPos = result.endPos + 1;
@@ -667,7 +696,7 @@ export default function Teleprompter() {
         // Get Deepgram credentials - either from local env or API endpoint
         let apiKey = DEEPGRAM_API_KEY_LOCAL;
         let wsUrl =
-          "wss://api.deepgram.com/v1/listen?model=nova-2&punctuate=true&interim_results=true&endpointing=200";
+          "wss://api.deepgram.com/v1/listen?model=nova-2&punctuate=true&interim_results=true&endpointing=100&vad_events=true";
 
         if (!apiKey && IS_PRODUCTION) {
           // Fetch token from our API endpoint
@@ -1000,14 +1029,11 @@ export default function Teleprompter() {
       }
 
       const elapsed = timestamp - scrollStartTimeRef.current;
-      const duration = 2000; // Animation duration in ms (slower = calmer)
+      const duration = 500; // Animation duration in ms
       const progress = Math.min(elapsed / duration, 1);
 
-      // Ease-in-out curve: starts slow, speeds up, then slows down at the end
-      const easedProgress =
-        progress < 0.5
-          ? 2 * progress * progress // ease in
-          : 1 - Math.pow(-2 * progress + 2, 2) / 2; // ease out
+      // Ease-out curve: starts fast, slows down at the end
+      const easedProgress = 1 - Math.pow(1 - progress, 2);
 
       // Calculate current position
       const diff = target - start;

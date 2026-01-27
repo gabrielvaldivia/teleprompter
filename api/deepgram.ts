@@ -41,7 +41,7 @@ export default async function handler(request: Request): Promise<Response> {
     // This is a middle-ground approach - key is fetched at runtime, not bundled
     return new Response(
       JSON.stringify({ 
-        url: 'wss://api.deepgram.com/v1/listen?model=nova-2&punctuate=true&interim_results=true&endpointing=200',
+        url: 'wss://api.deepgram.com/v1/listen?model=nova-2&punctuate=true&interim_results=true&endpointing=100&vad_events=true',
         token: apiKey 
       }),
       { 
