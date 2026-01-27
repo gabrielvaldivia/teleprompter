@@ -3,6 +3,7 @@ import { Rabbit, Type } from "lucide-react";
 import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
+import { marked } from "marked";
 
 type Sentence = { raw: string; words: { text: string }[] };
 
@@ -62,6 +63,7 @@ export default function Teleprompter() {
   const [recognizedTranscript, setRecognizedTranscript] = useState("");
   const [showRecognizedSpeech, setShowRecognizedSpeech] = useState(true);
   const [mobileBottomInset, setMobileBottomInset] = useState(0);
+  const [isDragging, setIsDragging] = useState(false);
 
   // Tiptap editor for WYSIWYG markdown editing
   const editor = useEditor({
@@ -93,6 +95,54 @@ export default function Teleprompter() {
 
   // Extract plain text content from editor for voice mode and other features
   const content = editor?.getText() || "";
+
+  // Drag and drop handlers for markdown files
+  const handleDragOver = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!isPlaying) {
+        setIsDragging(true);
+      }
+    },
+    [isPlaying],
+  );
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  }, []);
+
+  const handleDrop = useCallback(
+    async (e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setIsDragging(false);
+
+      if (isPlaying || !editor) return;
+
+      const files = Array.from(e.dataTransfer.files);
+      const mdFile = files.find(
+        (f) =>
+          f.name.endsWith(".md") ||
+          f.name.endsWith(".markdown") ||
+          f.name.endsWith(".txt"),
+      );
+
+      if (mdFile) {
+        try {
+          const text = await mdFile.text();
+          // Convert markdown to HTML and set editor content
+          const html = await marked(text);
+          editor.commands.setContent(html);
+        } catch (err) {
+          console.error("Failed to read file:", err);
+        }
+      }
+    },
+    [isPlaying, editor],
+  );
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -793,7 +843,21 @@ export default function Teleprompter() {
         style={{
           paddingBottom: `calc(8rem + ${mobileBottomInset}px)`,
         }}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
       >
+        {/* Drop zone indicator */}
+        {isDragging && !isPlaying && (
+          <div className="flex absolute inset-0 z-50 justify-center items-center bg-black/80">
+            <div className="p-8 text-center border-2 border-dashed rounded-lg border-neutral-500">
+              <p className="text-2xl font-bold text-neutral-300">
+                Drop markdown file here
+              </p>
+              <p className="mt-2 text-neutral-500">.md, .markdown, or .txt</p>
+            </div>
+          </div>
+        )}
         <div className="px-8 pt-8 pb-32 mx-auto max-w-4xl md:pt-32">
           <div className="relative min-h-[50vh]">
             {/* Voice mode when playing: word spans with fading for tracking */}
