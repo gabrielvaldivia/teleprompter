@@ -10,6 +10,7 @@ import { useEditor, EditorContent, JSONContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import { marked } from "marked";
+import { doubleMetaphone } from "double-metaphone";
 
 type Sentence = { raw: string; words: { text: string }[] };
 
@@ -205,6 +206,29 @@ function parseContentToSentences(content: string): {
 
 function normalizeWord(w: string): string {
   return w.toLowerCase().replace(/[^\w]/g, "");
+}
+
+// Phonetic matching using Double Metaphone for accent support
+function getPhoneticCodes(word: string): [string, string] {
+  const normalized = normalizeWord(word);
+  if (normalized.length < 2) return ["", ""];
+  return doubleMetaphone(normalized);
+}
+
+function wordsMatchPhonetically(word1: string, word2: string): boolean {
+  // Skip short words - too many false positives
+  if (word1.length < 4 || word2.length < 4) return false;
+  
+  const [primary1, secondary1] = getPhoneticCodes(word1);
+  const [primary2, secondary2] = getPhoneticCodes(word2);
+  
+  // Match if any codes match (primary-primary, primary-secondary, etc.)
+  if (primary1 && primary2 && primary1 === primary2) return true;
+  if (primary1 && secondary2 && primary1 === secondary2) return true;
+  if (secondary1 && primary2 && secondary1 === primary2) return true;
+  if (secondary1 && secondary2 && secondary1 === secondary2) return true;
+  
+  return false;
 }
 
 // Track how many spoken words we've processed (for incremental matching)
@@ -557,6 +581,17 @@ export default function Teleprompter() {
         const lookAhead = 100;
         const lookBehind = 100;
 
+        // Helper: check if two words match (exact or phonetic)
+        const wordsMatch = (spoken: string, script: string): boolean => {
+          // Exact match first
+          if (spoken === script) return true;
+          // Phonetic match for longer words (4+ chars)
+          if (spoken.length >= 4 && script.length >= 4) {
+            return wordsMatchPhonetically(spoken, script);
+          }
+          return false;
+        };
+
         // Helper: find longest consecutive match starting at given positions
         const findConsecutiveMatches = (
           spokenStart: number,
@@ -571,10 +606,10 @@ export default function Teleprompter() {
             const word = newWords[i];
             if (word.length <= 2) continue; // Skip tiny words
 
-            // Look for this word within a small gap
+            // Look for this word within a small gap (exact or phonetic match)
             let found = false;
             for (let gap = 0; gap <= maxGap && scriptIdx + gap < normalizedScript.length; gap++) {
-              if (normalizedScript[scriptIdx + gap] === word) {
+              if (wordsMatch(word, normalizedScript[scriptIdx + gap])) {
                 matches++;
                 lastMatchPos = scriptIdx + gap;
                 scriptIdx = scriptIdx + gap + 1;
@@ -594,7 +629,7 @@ export default function Teleprompter() {
             const searchStart = Math.max(0, current - lookBehind);
             // Look backwards from current position
             for (let pos = current - 5; pos >= searchStart; pos--) {
-              if (normalizedScript[pos] === word) {
+              if (wordsMatch(word, normalizedScript[pos])) {
                 scriptPos = pos + 1;
                 break;
               }
@@ -628,7 +663,7 @@ export default function Teleprompter() {
           if (word.length >= 6) { // Only match distinctive words (6+ chars)
             // Look in a larger window ahead to allow skipping sentences
             for (let pos = scriptPos; pos < scriptPos + lookAhead && pos < normalizedScript.length; pos++) {
-              if (normalizedScript[pos] === word) {
+              if (wordsMatch(word, normalizedScript[pos])) {
                 scriptPos = pos + 1;
                 break;
               }
@@ -1039,11 +1074,14 @@ export default function Teleprompter() {
       }
 
       const elapsed = timestamp - scrollStartTimeRef.current;
-      const duration = 500; // Animation duration in ms
+      const duration = 1800; // Animation duration in ms (slower = smoother)
       const progress = Math.min(elapsed / duration, 1);
 
-      // Ease-out curve: starts fast, slows down at the end
-      const easedProgress = 1 - Math.pow(1 - progress, 2);
+      // Ease-in-out curve: smooth start and end
+      const easedProgress =
+        progress < 0.5
+          ? 2 * progress * progress
+          : 1 - Math.pow(-2 * progress + 2, 2) / 2;
 
       // Calculate current position
       const diff = target - start;
@@ -1212,6 +1250,45 @@ export default function Teleprompter() {
                   </div>
                 </div>
 
+                {VOICE_SUPPORTED && (
+                  <div className="flex flex-col gap-2 md:flex-row md:gap-6 md:justify-between md:items-center">
+                    <label className="font-bold text-neutral-300 shrink-0">
+                      MODE
+                    </label>
+                    <span className="flex gap-2 items-center w-full md:w-auto">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMode("auto");
+                          spokenCountRef.current = 0;
+                          setSpokenWordCount(0);
+                          setTargetWordCount(0);
+                          setRecognizedTranscript("");
+                        }}
+                        className={`flex-1 md:flex-initial px-4 py-2 text-sm font-bold ${mode === "auto" ? "bg-white text-black" : "bg-neutral-700 text-neutral-300 hover:bg-neutral-600"}`}
+                      >
+                        Auto
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMode("voice");
+                          setIsPlaying(false);
+                          spokenCountRef.current = 0;
+                          setSpokenWordCount(0);
+                          setTargetWordCount(0);
+                          setRecognizedTranscript("");
+                          setVoiceError(null);
+                          resetTrackingState();
+                        }}
+                        className={`flex-1 md:flex-initial px-4 py-2 text-sm font-bold ${mode === "voice" ? "bg-white text-black" : "bg-neutral-700 text-neutral-300 hover:bg-neutral-600"}`}
+                      >
+                        Voice
+                      </button>
+                    </span>
+                  </div>
+                )}
+
                 {VOICE_SUPPORTED && mode === "voice" && (
                   <div className="flex flex-col gap-2 md:flex-row md:gap-6 md:justify-between md:items-center">
                     <span className="font-bold text-neutral-300 shrink-0">
@@ -1254,45 +1331,6 @@ export default function Teleprompter() {
                         Web Speech
                       </button>
                     </div>
-                  </div>
-                )}
-
-                {VOICE_SUPPORTED && (
-                  <div className="flex flex-col gap-2 md:flex-row md:gap-6 md:justify-between md:items-center">
-                    <label className="font-bold text-neutral-300 shrink-0">
-                      MODE
-                    </label>
-                    <span className="flex gap-2 items-center w-full md:w-auto">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setMode("auto");
-                          spokenCountRef.current = 0;
-                          setSpokenWordCount(0);
-                          setTargetWordCount(0);
-                          setRecognizedTranscript("");
-                        }}
-                        className={`flex-1 md:flex-initial px-4 py-2 text-sm font-bold ${mode === "auto" ? "bg-white text-black" : "bg-neutral-700 text-neutral-300 hover:bg-neutral-600"}`}
-                      >
-                        Auto
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setMode("voice");
-                          setIsPlaying(false);
-                          spokenCountRef.current = 0;
-                          setSpokenWordCount(0);
-                          setTargetWordCount(0);
-                          setRecognizedTranscript("");
-                          setVoiceError(null);
-                          resetTrackingState();
-                        }}
-                        className={`flex-1 md:flex-initial px-4 py-2 text-sm font-bold ${mode === "voice" ? "bg-white text-black" : "bg-neutral-700 text-neutral-300 hover:bg-neutral-600"}`}
-                      >
-                        Voice
-                      </button>
-                    </span>
                   </div>
                 )}
 
