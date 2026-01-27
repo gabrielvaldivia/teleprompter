@@ -21,6 +21,7 @@ interface VoiceModeContentProps {
   nextUnreadWordRef: React.MutableRefObject<HTMLSpanElement | null>;
   onWordClick?: (wordIndex: number) => void;
   fadeMode?: "none" | "words" | "lines";
+  isAtEndOfLineRef?: React.MutableRefObject<boolean>;
 }
 
 function VoiceModeContent({
@@ -29,6 +30,7 @@ function VoiceModeContent({
   nextUnreadWordRef,
   onWordClick,
   fadeMode = "words",
+  isAtEndOfLineRef,
 }: VoiceModeContentProps) {
   const wordIndexRef = useRef(0);
   const wordRefsMap = useRef<Map<number, HTMLSpanElement>>(new Map());
@@ -37,16 +39,33 @@ function VoiceModeContent({
   // Reset word index on each render
   wordIndexRef.current = 0;
 
-  // Measure current word's line position after render
+  // Measure current word's line position after render and check if at end of line
   useEffect(() => {
-    if (fadeMode !== "lines") return;
+    if (fadeMode !== "lines") {
+      if (isAtEndOfLineRef) isAtEndOfLineRef.current = false;
+      return;
+    }
     
     const currentWordEl = wordRefsMap.current.get(spokenWordCount);
+    const nextWordEl = wordRefsMap.current.get(spokenWordCount + 1);
+    
     if (currentWordEl) {
       const rect = currentWordEl.getBoundingClientRect();
       setCurrentLineTop(rect.top);
+      
+      // Check if we're at the end of a line (next word is on a different line)
+      if (isAtEndOfLineRef) {
+        if (nextWordEl) {
+          const nextRect = nextWordEl.getBoundingClientRect();
+          // If next word's top is significantly different, we're at end of line
+          isAtEndOfLineRef.current = nextRect.top > rect.top + 5;
+        } else {
+          // No next word means we're at the very end
+          isAtEndOfLineRef.current = true;
+        }
+      }
     }
-  }, [spokenWordCount, fadeMode]);
+  }, [spokenWordCount, fadeMode, isAtEndOfLineRef]);
 
   const renderTextWithWordTracking = (
     text: string,
@@ -442,6 +461,9 @@ export default function Teleprompter() {
   const sentenceEndGlobalIndexRef = useRef<number[]>([]);
   const voiceLookaheadRef = useRef(DEFAULT_VOICE_LOOKAHEAD_WORDS);
   const fadeModeRef = useRef<"none" | "words" | "lines">("words");
+  const isAtEndOfLineRef = useRef(false);
+  const lastTranscriptTimeRef = useRef(0);
+  const pauseCheckTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Deepgram refs
   const deepgramSocketRef = useRef<WebSocket | null>(null);
@@ -479,6 +501,50 @@ export default function Teleprompter() {
   useEffect(() => {
     fadeModeRef.current = fadeMode;
   }, [fadeMode]);
+
+  // Pause detection for lines mode: advance to next line when paused at end of line
+  useEffect(() => {
+    // Only active in voice mode with lines fade when playing
+    if (mode !== "voice" || !isPlaying || fadeMode !== "lines") {
+      if (pauseCheckTimerRef.current) {
+        clearInterval(pauseCheckTimerRef.current);
+        pauseCheckTimerRef.current = null;
+      }
+      return;
+    }
+
+    // Check every 200ms if we've paused at the end of a line
+    pauseCheckTimerRef.current = setInterval(() => {
+      const now = Date.now();
+      const timeSinceLastTranscript = now - lastTranscriptTimeRef.current;
+      
+      // If paused for 800ms+ and at end of line, advance to next line
+      if (
+        lastTranscriptTimeRef.current > 0 &&
+        timeSinceLastTranscript > 800 &&
+        isAtEndOfLineRef.current
+      ) {
+        setTargetWordCount((current) => {
+          const newPos = current + 1;
+          // Don't advance past the end
+          if (newPos >= scriptWordsRef.current.length) {
+            return current;
+          }
+          spokenCountRef.current = newPos;
+          return newPos;
+        });
+        // Reset so we don't keep advancing
+        isAtEndOfLineRef.current = false;
+      }
+    }, 200);
+
+    return () => {
+      if (pauseCheckTimerRef.current) {
+        clearInterval(pauseCheckTimerRef.current);
+        pauseCheckTimerRef.current = null;
+      }
+    };
+  }, [mode, isPlaying, fadeMode]);
 
   // Smooth animation: move spokenWordCount toward targetWordCount
   useEffect(() => {
@@ -584,6 +650,8 @@ export default function Teleprompter() {
     setRecognizedTranscript("");
     setVoiceError(null);
     resetTrackingState(); // Reset the sequential tracking state
+    lastTranscriptTimeRef.current = 0;
+    isAtEndOfLineRef.current = false;
     if (scrollRef.current) {
       scrollRef.current.scrollTop = 0;
     }
@@ -662,6 +730,7 @@ export default function Teleprompter() {
       const timeSinceLastTranscript = now - lastTranscriptTime;
       const isPaused = lastTranscriptTime > 0 && timeSinceLastTranscript > 1000;
       lastTranscriptTime = now;
+      lastTranscriptTimeRef.current = now; // Update ref for pause detection effect
 
       // Use recent words if no new words (prevents getting stuck)
       const wordsToProcess = newWords.length > 0 ? newWords : recentWords;
@@ -1831,6 +1900,7 @@ export default function Teleprompter() {
                   nextUnreadWordRef={nextUnreadWordRef}
                   onWordClick={handleWordClick}
                   fadeMode={fadeMode}
+                  isAtEndOfLineRef={isAtEndOfLineRef}
                 />
               </div>
             ) : (
