@@ -1,5 +1,8 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { Rabbit, Type } from "lucide-react";
+import { useEditor, EditorContent } from "@tiptap/react";
+import StarterKit from "@tiptap/starter-kit";
+import Placeholder from "@tiptap/extension-placeholder";
 
 type Sentence = { raw: string; words: { text: string }[] };
 
@@ -42,14 +45,15 @@ const VOICE_LOOKAHEAD_WORDS = 12;
 const VOICE_MAX_ADVANCE_PER_RESULT = 20;
 
 export default function Teleprompter() {
-  const [content, setContent] = useState("");
   const [isPlaying, setIsPlaying] = useState(false);
   const [speed, setSpeed] = useState(50);
   const [fontSize, setFontSize] = useState(() =>
     typeof window !== "undefined" && window.innerWidth >= 768 ? 44 : 24,
   );
   const [showSettings, setShowSettings] = useState(false);
-  const [fontFamily, setFontFamily] = useState<"sans" | "serif" | "mono">("sans");
+  const [fontFamily, setFontFamily] = useState<"sans" | "serif" | "mono">(
+    "sans",
+  );
   const [lineHeight, setLineHeight] = useState(1.5);
   const [elapsedTime, setElapsedTime] = useState(0);
   const [mode, setMode] = useState<"auto" | "voice">("auto");
@@ -58,6 +62,37 @@ export default function Teleprompter() {
   const [recognizedTranscript, setRecognizedTranscript] = useState("");
   const [showRecognizedSpeech, setShowRecognizedSpeech] = useState(true);
   const [mobileBottomInset, setMobileBottomInset] = useState(0);
+
+  // Tiptap editor for WYSIWYG markdown editing
+  const editor = useEditor({
+    extensions: [
+      StarterKit.configure({
+        heading: {
+          levels: [1, 2, 3],
+        },
+      }),
+      Placeholder.configure({
+        placeholder: "Enter or paste your script here...",
+      }),
+    ],
+    content: "",
+    editorProps: {
+      attributes: {
+        class: "outline-none min-h-[50vh]",
+      },
+    },
+    editable: !isPlaying,
+  });
+
+  // Update editor editability when playing state changes
+  useEffect(() => {
+    if (editor) {
+      editor.setEditable(!isPlaying);
+    }
+  }, [editor, isPlaying]);
+
+  // Extract plain text content from editor for voice mode and other features
+  const content = editor?.getText() || "";
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -761,73 +796,62 @@ export default function Teleprompter() {
       >
         <div className="px-8 pt-8 pb-32 mx-auto max-w-4xl md:pt-32">
           <div className="relative min-h-[50vh]">
-            {/* When playing: visible read-only script (voice = word spans + fading + scroll; auto = plain scroll). When paused: invisible ruler for layout. */}
-            <div
-              className={`whitespace-pre-wrap text-neutral-100 ${fontFamily === "sans" ? "font-sans" : fontFamily === "serif" ? "font-serif" : "font-mono"} ${!isPlaying ? "invisible pointer-events-none" : "select-none"}`}
-              style={{ fontSize: `${fontSize}px`, lineHeight }}
-              aria-hidden={!isPlaying}
-            >
-              {mode === "voice" && sentences.length > 0
-                ? sentences.map((sentence, si) => {
-                    let globalIdx = 0;
-                    for (let i = 0; i < si; i++)
-                      globalIdx += sentences[i].words.length;
-                    const tokens = sentence.raw.split(/(\s+)/);
-                    let wordIdx = 0;
-                    return (
-                      <span
-                        key={si}
-                        ref={(el) => {
-                          sentenceRefs.current[si] = el;
-                        }}
-                        style={{ display: "inline" }}
-                      >
-                        {tokens.map((token, ti) => {
-                          const isWord = /\S/.test(token);
-                          const g = globalIdx + wordIdx;
-                          if (isWord) wordIdx += 1;
-                          return isWord ? (
-                            <span
-                              key={`${si}-${ti}`}
-                              ref={
-                                g === spokenWordCount
-                                  ? nextUnreadWordRef
-                                  : undefined
-                              }
-                              style={
-                                isPlaying &&
-                                mode === "voice" &&
-                                g < spokenWordCount
-                                  ? { opacity: 0.2 }
-                                  : undefined
-                              }
-                              aria-hidden
-                            >
-                              {token}
-                            </span>
-                          ) : (
-                            <span key={`${si}-${ti}`}>{token}</span>
-                          );
-                        })}
-                        {separators[si] != null ? separators[si] : null}
-                      </span>
-                    );
-                  })
-                : content || "\u00A0"}
-            </div>
-            {!isPlaying && (
-              <textarea
-                value={content}
-                onChange={(e) => setContent(e.target.value)}
-                placeholder="Enter or paste your script here..."
-                className={`overflow-hidden absolute inset-0 w-full min-h-full whitespace-pre-wrap bg-transparent border-0 resize-none text-neutral-100 placeholder-neutral-500 focus:outline-none focus:ring-0 ${fontFamily === "sans" ? "font-sans" : fontFamily === "serif" ? "font-serif" : "font-mono"}`}
-                style={{
-                  fontSize: `${fontSize}px`,
-                  lineHeight,
-                }}
-                spellCheck={true}
-                aria-label="Teleprompter script"
-              />
+            {/* Voice mode when playing: word spans with fading for tracking */}
+            {isPlaying && mode === "voice" && sentences.length > 0 ? (
+              <div
+                className={`text-neutral-100 select-none ${fontFamily === "sans" ? "font-sans" : fontFamily === "serif" ? "font-serif" : "font-mono"}`}
+                style={{ fontSize: `${fontSize}px`, lineHeight }}
+              >
+                {sentences.map((sentence, si) => {
+                  let globalIdx = 0;
+                  for (let i = 0; i < si; i++)
+                    globalIdx += sentences[i].words.length;
+                  const tokens = sentence.raw.split(/(\s+)/);
+                  let wordIdx = 0;
+                  return (
+                    <span
+                      key={si}
+                      ref={(el) => {
+                        sentenceRefs.current[si] = el;
+                      }}
+                      style={{ display: "inline" }}
+                    >
+                      {tokens.map((token, ti) => {
+                        const isWord = /\S/.test(token);
+                        const g = globalIdx + wordIdx;
+                        if (isWord) wordIdx += 1;
+                        return isWord ? (
+                          <span
+                            key={`${si}-${ti}`}
+                            ref={
+                              g === spokenWordCount
+                                ? nextUnreadWordRef
+                                : undefined
+                            }
+                            style={
+                              g < spokenWordCount ? { opacity: 0.2 } : undefined
+                            }
+                            aria-hidden
+                          >
+                            {token}
+                          </span>
+                        ) : (
+                          <span key={`${si}-${ti}`}>{token}</span>
+                        );
+                      })}
+                      {separators[si] != null ? separators[si] : null}
+                    </span>
+                  );
+                })}
+              </div>
+            ) : (
+              /* Tiptap editor: WYSIWYG editing when paused, read-only rich display when playing */
+              <div
+                className={`tiptap-editor text-neutral-100 ${fontFamily === "sans" ? "font-sans" : fontFamily === "serif" ? "font-serif" : "font-mono"} ${isPlaying ? "select-none" : ""}`}
+                style={{ fontSize: `${fontSize}px`, lineHeight }}
+              >
+                <EditorContent editor={editor} />
+              </div>
             )}
           </div>
           {mode === "voice" && content && (
