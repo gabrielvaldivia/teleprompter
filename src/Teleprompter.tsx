@@ -71,7 +71,7 @@ function VoiceModeContent({
           ref={wordIndex === spokenWordCount ? nextUnreadWordRef : undefined}
           style={{
             opacity: wordIndex < spokenWordCount ? 0.3 : 1,
-            transition: 'opacity 0.5s ease-out',
+            transition: "opacity 0.5s ease-out",
           }}
         >
           {content}
@@ -119,13 +119,13 @@ function VoiceModeContent({
         );
       case "bulletList":
         return (
-          <ul key={index} className="list-disc pl-6 mb-4 space-y-1">
+          <ul key={index} className="pl-6 mb-4 space-y-1 list-disc">
             {children}
           </ul>
         );
       case "orderedList":
         return (
-          <ol key={index} className="list-decimal pl-6 mb-4 space-y-1">
+          <ol key={index} className="pl-6 mb-4 space-y-1 list-decimal">
             {children}
           </ol>
         );
@@ -135,7 +135,7 @@ function VoiceModeContent({
         return (
           <blockquote
             key={index}
-            className="border-l-4 border-neutral-500 pl-4 italic my-4"
+            className="pl-4 my-4 italic border-l-4 border-neutral-500"
           >
             {children}
           </blockquote>
@@ -150,7 +150,7 @@ function VoiceModeContent({
           </pre>
         );
       case "horizontalRule":
-        return <hr key={index} className="border-neutral-600 my-6" />;
+        return <hr key={index} className="my-6 border-neutral-600" />;
       case "hardBreak":
         return <br key={index} />;
       default:
@@ -210,7 +210,9 @@ function resetTrackingState() {
 }
 
 /** Check if we have a Deepgram API key configured (local dev) */
-const DEEPGRAM_API_KEY_LOCAL = import.meta.env.VITE_DEEPGRAM_API_KEY as string | undefined;
+const DEEPGRAM_API_KEY_LOCAL = import.meta.env.VITE_DEEPGRAM_API_KEY as
+  | string
+  | undefined;
 
 /** Check if we're in production (Vercel) - API endpoint will provide the key */
 const IS_PRODUCTION = import.meta.env.PROD;
@@ -218,7 +220,10 @@ const IS_PRODUCTION = import.meta.env.PROD;
 /** Voice is always supported - we'll use API endpoint in prod or local key in dev */
 const VOICE_SUPPORTED =
   typeof window !== "undefined" &&
-  (IS_PRODUCTION || DEEPGRAM_API_KEY_LOCAL || window.SpeechRecognition != null || window.webkitSpeechRecognition != null);
+  (IS_PRODUCTION ||
+    DEEPGRAM_API_KEY_LOCAL ||
+    window.SpeechRecognition != null ||
+    window.webkitSpeechRecognition != null);
 
 /** Use Deepgram if we have a local key OR we're in production (API will provide key) */
 const USE_DEEPGRAM = !!(DEEPGRAM_API_KEY_LOCAL || IS_PRODUCTION);
@@ -348,7 +353,7 @@ export default function Teleprompter() {
   const scriptWordsRef = useRef<string[]>([]);
   const sentenceEndGlobalIndexRef = useRef<number[]>([]);
   const voiceLookaheadRef = useRef(DEFAULT_VOICE_LOOKAHEAD_WORDS);
-  
+
   // Deepgram refs
   const deepgramSocketRef = useRef<WebSocket | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -396,35 +401,41 @@ export default function Teleprompter() {
       if (!lastAnimationTimeRef.current) {
         lastAnimationTimeRef.current = timestamp;
       }
-      
+
       const delta = timestamp - lastAnimationTimeRef.current;
       lastAnimationTimeRef.current = timestamp;
-      
+
       setSpokenWordCount((current) => {
         if (current === targetWordCount) {
           return current;
         }
-        
+
         // Animation speed: words per second (slower = calmer)
-        const wordsPerSecond = 6;
+        const wordsPerSecond = 3;
         const wordsThisFrame = (wordsPerSecond * delta) / 1000;
-        
+
         if (current < targetWordCount) {
           // Moving forward
-          const newPos = Math.min(current + Math.max(1, wordsThisFrame), targetWordCount);
+          const newPos = Math.min(
+            current + Math.max(1, wordsThisFrame),
+            targetWordCount,
+          );
           return Math.round(newPos);
         } else {
           // Moving backward
-          const newPos = Math.max(current - Math.max(1, wordsThisFrame), targetWordCount);
+          const newPos = Math.max(
+            current - Math.max(1, wordsThisFrame),
+            targetWordCount,
+          );
           return Math.round(newPos);
         }
       });
-      
+
       animationFrameRef.current = requestAnimationFrame(animate);
     };
-    
+
     animationFrameRef.current = requestAnimationFrame(animate);
-    
+
     return () => {
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current);
@@ -504,95 +515,113 @@ export default function Teleprompter() {
   }, [isPlaying, mode]);
 
   // Process transcript and update target position using incremental matching
-  const processTranscript = useCallback((transcript: string, isFinal: boolean) => {
-    const scriptWords = scriptWordsRef.current;
-    const spokenWords = transcript.split(/\s+/).filter(Boolean);
-    
-    if (scriptWords.length === 0 || spokenWords.length === 0) return;
+  const processTranscript = useCallback(
+    (transcript: string, isFinal: boolean) => {
+      const scriptWords = scriptWordsRef.current;
+      const spokenWords = transcript.split(/\s+/).filter(Boolean);
 
-    // Normalize words for comparison
-    const normalizedScript = scriptWords.map(normalizeWord);
-    const normalizedSpoken = spokenWords.map(normalizeWord).filter(w => w.length > 0);
-    
-    // Only process NEW words since last call (prevents re-matching)
-    const newWordsStart = Math.min(lastProcessedWordCount, normalizedSpoken.length);
-    const newWords = normalizedSpoken.slice(newWordsStart);
-    lastProcessedWordCount = normalizedSpoken.length;
-    
-    if (newWords.length === 0) return;
+      if (scriptWords.length === 0 || spokenWords.length === 0) return;
 
-    setTargetWordCount((current) => {
-      let scriptPos = current;
-      const lookAhead = 150;  // Look far ahead (allows skipping multiple paragraphs)
-      const lookBehind = 150; // Look far behind (allows jumping back multiple paragraphs)
-      
-      // CONSERVATIVE: Check for going BACKWARD (requires high confidence)
-      // Need 3+ matching distinctive words to go back
-      if (newWords.length >= 3) {
-        const distinctiveWords = newWords.filter(w => w.length >= 5); // Only long words
-        if (distinctiveWords.length >= 2) {
-          const searchStart = Math.max(0, current - lookBehind);
-          
-          // Look for a cluster of distinctive words behind current position
-          for (let pos = searchStart; pos < current - 10; pos++) {
-            let matchCount = 0;
-            let lastMatchPos = pos;
-            
-            // Check how many distinctive words match in this region
-            for (const word of distinctiveWords) {
-              for (let offset = 0; offset <= 20 && pos + offset < current; offset++) {
-                if (normalizedScript[pos + offset] === word) {
-                  matchCount++;
-                  lastMatchPos = Math.max(lastMatchPos, pos + offset);
-                  break;
-                }
+      // Normalize words for comparison
+      const normalizedScript = scriptWords.map(normalizeWord);
+      const normalizedSpoken = spokenWords
+        .map(normalizeWord)
+        .filter((w) => w.length > 0);
+
+      // Only process NEW words since last call (prevents re-matching)
+      const newWordsStart = Math.min(
+        lastProcessedWordCount,
+        normalizedSpoken.length,
+      );
+      const newWords = normalizedSpoken.slice(newWordsStart);
+      lastProcessedWordCount = normalizedSpoken.length;
+
+      if (newWords.length === 0) return;
+
+      setTargetWordCount((current) => {
+        let scriptPos = current;
+        const lookAhead = 100;
+        const lookBehind = 100;
+
+        // Helper: find longest consecutive match starting at given positions
+        const findConsecutiveMatches = (
+          spokenStart: number,
+          scriptStart: number,
+          maxGap: number = 2
+        ): { count: number; endPos: number } => {
+          let matches = 0;
+          let scriptIdx = scriptStart;
+          let lastMatchPos = scriptStart;
+
+          for (let i = spokenStart; i < newWords.length && scriptIdx < normalizedScript.length; i++) {
+            const word = newWords[i];
+            if (word.length <= 2) continue; // Skip tiny words
+
+            // Look for this word within a small gap
+            let found = false;
+            for (let gap = 0; gap <= maxGap && scriptIdx + gap < normalizedScript.length; gap++) {
+              if (normalizedScript[scriptIdx + gap] === word) {
+                matches++;
+                lastMatchPos = scriptIdx + gap;
+                scriptIdx = scriptIdx + gap + 1;
+                found = true;
+                break;
               }
             }
-            
-            // HIGH CONFIDENCE required to go back: 3+ distinctive word matches
-            if (matchCount >= 3) {
-              scriptPos = lastMatchPos + 1;
-              break;
-            }
+            if (!found) break; // Sequence broken
           }
-        }
-      }
-      
-      // AGGRESSIVE: Forward matching (lower confidence needed)
-      for (const spokenWord of newWords) {
-        // For forward: accept words with 2+ characters
-        if (spokenWord.length <= 1) continue;
-        
-        // Try to match ahead - aggressive, take first match
-        let matched = false;
-        for (let skip = 0; skip <= lookAhead && scriptPos + skip < normalizedScript.length; skip++) {
-          if (normalizedScript[scriptPos + skip] === spokenWord) {
-            scriptPos = scriptPos + skip + 1;
-            matched = true;
-            break;
-          }
-        }
-        
-        // Only look behind for VERY distinctive words (6+ chars) if not found ahead
-        if (!matched && spokenWord.length >= 6) {
-          const searchStart = Math.max(0, scriptPos - lookBehind);
-          for (let pos = scriptPos - 1; pos >= searchStart; pos--) {
-            if (normalizedScript[pos] === spokenWord) {
-              scriptPos = pos + 1;
-              break;
-            }
-          }
-        }
-      }
+          return { count: matches, endPos: lastMatchPos };
+        };
 
-      // Cap large jumps forward, but allow going back freely
-      const maxAdvance = isFinal ? VOICE_MAX_ADVANCE_PER_RESULT : 25;
-      const finalPosition = Math.min(scriptPos, current + maxAdvance);
-      
-      spokenCountRef.current = finalPosition;
-      return finalPosition;
-    });
-  }, []);
+        // Check for BACKWARD match - look for consecutive sequence behind
+        if (newWords.length >= 2) {
+          const searchStart = Math.max(0, current - lookBehind);
+          let bestBackwardPos = -1;
+          let bestBackwardMatches = 0;
+
+          for (let pos = searchStart; pos < current - 3; pos++) {
+            const result = findConsecutiveMatches(0, pos, 2);
+            // Need 3+ consecutive matches to go back
+            if (result.count >= 3 && result.count > bestBackwardMatches) {
+              bestBackwardMatches = result.count;
+              bestBackwardPos = result.endPos + 1;
+            }
+          }
+
+          if (bestBackwardPos >= 0 && bestBackwardPos < current) {
+            scriptPos = bestBackwardPos;
+          }
+        }
+
+        // Check for FORWARD match - look for consecutive sequence ahead
+        if (newWords.length >= 2) {
+          let bestForwardPos = scriptPos;
+          let bestForwardMatches = 0;
+
+          for (let pos = scriptPos; pos < scriptPos + lookAhead && pos < normalizedScript.length; pos++) {
+            const result = findConsecutiveMatches(0, pos, 2);
+            // Need 2+ consecutive matches to advance
+            if (result.count >= 2 && result.count > bestForwardMatches) {
+              bestForwardMatches = result.count;
+              bestForwardPos = result.endPos + 1;
+            }
+          }
+
+          if (bestForwardMatches >= 2) {
+            scriptPos = bestForwardPos;
+          }
+        }
+
+        // Cap large jumps forward
+        const maxAdvance = isFinal ? VOICE_MAX_ADVANCE_PER_RESULT : 15;
+        const finalPosition = Math.min(scriptPos, current + maxAdvance);
+
+        spokenCountRef.current = finalPosition;
+        return finalPosition;
+      });
+    },
+    [],
+  );
 
   // Deepgram voice recognition
   useEffect(() => {
@@ -607,7 +636,7 @@ export default function Teleprompter() {
         mediaRecorderRef.current = null;
       }
       if (mediaStreamRef.current) {
-        mediaStreamRef.current.getTracks().forEach(track => track.stop());
+        mediaStreamRef.current.getTracks().forEach((track) => track.stop());
         mediaStreamRef.current = null;
       }
       deepgramTranscriptRef.current = "";
@@ -620,27 +649,34 @@ export default function Teleprompter() {
     const startDeepgram = async () => {
       // Reset tracking state for new session
       resetTrackingState();
-      
+
       try {
         // Get Deepgram credentials - either from local env or API endpoint
         let apiKey = DEEPGRAM_API_KEY_LOCAL;
-        let wsUrl = 'wss://api.deepgram.com/v1/listen?model=nova-2&punctuate=true&interim_results=true&endpointing=200';
-        
+        let wsUrl =
+          "wss://api.deepgram.com/v1/listen?model=nova-2&punctuate=true&interim_results=true&endpointing=200";
+
         if (!apiKey && IS_PRODUCTION) {
           // Fetch token from our API endpoint
           console.log("[Deepgram] Fetching token from API...");
           try {
-            const response = await fetch('/api/deepgram');
+            const response = await fetch("/api/deepgram");
             if (!response.ok) {
-              const error = await response.json().catch(() => ({ error: 'Failed to get Deepgram credentials' }));
-              throw new Error(error.error || 'Failed to get Deepgram credentials');
+              const error = await response
+                .json()
+                .catch(() => ({ error: "Failed to get Deepgram credentials" }));
+              throw new Error(
+                error.error || "Failed to get Deepgram credentials",
+              );
             }
             const data = await response.json();
             apiKey = data.token;
             if (data.url) wsUrl = data.url;
           } catch (fetchErr) {
             console.error("[Deepgram] Failed to fetch token:", fetchErr);
-            throw new Error("Could not connect to voice service. Please try again.");
+            throw new Error(
+              "Could not connect to voice service. Please try again.",
+            );
           }
         }
 
@@ -651,18 +687,18 @@ export default function Teleprompter() {
         if (!isActive) return;
 
         // Get microphone access
-        const stream = await navigator.mediaDevices.getUserMedia({ 
+        const stream = await navigator.mediaDevices.getUserMedia({
           audio: {
             echoCancellation: true,
             noiseSuppression: true,
-          } 
+          },
         });
-        
+
         if (!isActive) {
-          stream.getTracks().forEach(track => track.stop());
+          stream.getTracks().forEach((track) => track.stop());
           return;
         }
-        
+
         mediaStreamRef.current = stream;
 
         // Connect to Deepgram WebSocket
@@ -674,17 +710,17 @@ export default function Teleprompter() {
             socket.close();
             return;
           }
-          
+
           deepgramSocketRef.current = socket;
           deepgramTranscriptRef.current = "";
 
           // Start MediaRecorder to capture audio
           const mediaRecorder = new MediaRecorder(stream, {
-            mimeType: MediaRecorder.isTypeSupported('audio/webm;codecs=opus') 
-              ? 'audio/webm;codecs=opus' 
-              : 'audio/webm'
+            mimeType: MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+              ? "audio/webm;codecs=opus"
+              : "audio/webm",
           });
-          
+
           mediaRecorder.ondataavailable = (event) => {
             if (event.data.size > 0 && socket.readyState === WebSocket.OPEN) {
               socket.send(event.data);
@@ -701,7 +737,7 @@ export default function Teleprompter() {
             const data = JSON.parse(event.data);
             const transcript = data.channel?.alternatives?.[0]?.transcript;
             const isFinal = data.is_final;
-            
+
             if (transcript) {
               if (isFinal) {
                 // Append final transcript
@@ -711,7 +747,11 @@ export default function Teleprompter() {
                 processTranscript(fullTranscript, true);
               } else {
                 // Show interim result
-                const displayTranscript = (deepgramTranscriptRef.current + " " + transcript).trim();
+                const displayTranscript = (
+                  deepgramTranscriptRef.current +
+                  " " +
+                  transcript
+                ).trim();
                 setRecognizedTranscript(displayTranscript);
                 // Also process interim for faster tracking
                 processTranscript(displayTranscript, false);
@@ -735,13 +775,14 @@ export default function Teleprompter() {
             setVoiceError("Deepgram connection closed unexpectedly.");
           }
         };
-
       } catch (err) {
         console.error("[Deepgram] Setup error:", err);
         if (err instanceof Error && err.name === "NotAllowedError") {
           setVoiceError("Microphone access denied");
         } else {
-          setVoiceError(err instanceof Error ? err.message : "Could not start microphone");
+          setVoiceError(
+            err instanceof Error ? err.message : "Could not start microphone",
+          );
         }
         setIsPlaying(false);
       }
@@ -760,11 +801,13 @@ export default function Teleprompter() {
       if (mediaRecorderRef.current) {
         try {
           mediaRecorderRef.current.stop();
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
         mediaRecorderRef.current = null;
       }
       if (mediaStreamRef.current) {
-        mediaStreamRef.current.getTracks().forEach(track => track.stop());
+        mediaStreamRef.current.getTracks().forEach((track) => track.stop());
         mediaStreamRef.current = null;
       }
     };
@@ -773,14 +816,14 @@ export default function Teleprompter() {
   // Fallback: Browser Speech Recognition (when Deepgram not configured)
   useEffect(() => {
     if (USE_DEEPGRAM) return; // Skip if using Deepgram
-    
+
     console.log("[Voice] Browser Speech API effect run", {
       mode,
       isPlaying,
       VOICE_SUPPORTED,
       flatWordsLength: flatWords.length,
     });
-    
+
     if (mode !== "voice" || !isPlaying || !VOICE_SUPPORTED) {
       if (recognitionRef.current) {
         try {
@@ -801,7 +844,7 @@ export default function Teleprompter() {
 
     // Reset tracking state for new session
     resetTrackingState();
-    
+
     const recognition = new SR() as SpeechRecognition;
     recognition.continuous = true;
     recognition.interimResults = true;
@@ -835,7 +878,10 @@ export default function Teleprompter() {
     };
 
     recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
-      console.log("[Voice] onerror", { error: event.error, message: event.message });
+      console.log("[Voice] onerror", {
+        error: event.error,
+        message: event.message,
+      });
       if (event.error === "not-allowed") {
         setVoiceError("Microphone access denied");
         setIsPlaying(false);
@@ -854,10 +900,16 @@ export default function Teleprompter() {
 
     recognition.onend = () => {
       if (fatalErrorRef.current) return;
-      if (recognitionRef.current === recognition && mode === "voice" && isPlaying) {
+      if (
+        recognitionRef.current === recognition &&
+        mode === "voice" &&
+        isPlaying
+      ) {
         try {
           recognition.start();
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
       }
     };
 
@@ -865,13 +917,17 @@ export default function Teleprompter() {
     try {
       recognition.start();
     } catch (e) {
-      setVoiceError(e instanceof Error ? e.message : "Could not start microphone");
+      setVoiceError(
+        e instanceof Error ? e.message : "Could not start microphone",
+      );
     }
 
     return () => {
       try {
         recognition.stop();
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
       if (recognitionRef.current === recognition) {
         recognitionRef.current = null;
       }
@@ -883,7 +939,7 @@ export default function Teleprompter() {
   const scrollStartRef = useRef<number | null>(null);
   const scrollStartTimeRef = useRef<number | null>(null);
   const scrollAnimationRef = useRef<number | null>(null);
-  
+
   useEffect(() => {
     if (
       mode !== "voice" ||
@@ -894,13 +950,16 @@ export default function Teleprompter() {
     const container = scrollRef.current;
     const el = nextUnreadWordRef.current;
     if (!container || !el) return;
-    
+
     // Calculate target scroll position
     const cr = container.getBoundingClientRect();
     const er = el.getBoundingClientRect();
     const offsetFromTop = cr.height * 0.32;
-    const targetScrollTop = Math.max(0, container.scrollTop + (er.top - cr.top) - offsetFromTop);
-    
+    const targetScrollTop = Math.max(
+      0,
+      container.scrollTop + (er.top - cr.top) - offsetFromTop,
+    );
+
     // Set new target and reset animation start
     const currentScroll = container.scrollTop;
     if (scrollTargetRef.current !== targetScrollTop) {
@@ -908,38 +967,41 @@ export default function Teleprompter() {
       scrollStartRef.current = currentScroll;
       scrollStartTimeRef.current = null; // Will be set on first frame
     }
-    
+
     // Start smooth scroll animation if not already running
     if (scrollAnimationRef.current) return;
-    
+
     const animateScroll = (timestamp: number) => {
       const container = scrollRef.current;
       const target = scrollTargetRef.current;
       const start = scrollStartRef.current;
-      
+
       if (!container || target === null || start === null) {
         scrollAnimationRef.current = null;
         return;
       }
-      
+
       // Initialize start time
       if (scrollStartTimeRef.current === null) {
         scrollStartTimeRef.current = timestamp;
       }
-      
+
       const elapsed = timestamp - scrollStartTimeRef.current;
-      const duration = 800; // Animation duration in ms
+      const duration = 2000; // Animation duration in ms (slower = calmer)
       const progress = Math.min(elapsed / duration, 1);
-      
-      // Ease-in curve (quadratic): starts slow, accelerates
-      const easedProgress = progress * progress;
-      
+
+      // Ease-in-out curve: starts slow, speeds up, then slows down at the end
+      const easedProgress =
+        progress < 0.5
+          ? 2 * progress * progress // ease in
+          : 1 - Math.pow(-2 * progress + 2, 2) / 2; // ease out
+
       // Calculate current position
       const diff = target - start;
       const newScrollTop = start + diff * easedProgress;
-      
+
       container.scrollTop = newScrollTop;
-      
+
       // Continue or finish
       if (progress < 1) {
         scrollAnimationRef.current = requestAnimationFrame(animateScroll);
@@ -947,9 +1009,9 @@ export default function Teleprompter() {
         scrollAnimationRef.current = null;
       }
     };
-    
+
     scrollAnimationRef.current = requestAnimationFrame(animateScroll);
-    
+
     return () => {
       // Don't cancel - let animation continue smoothly
     };
@@ -1190,9 +1252,9 @@ export default function Teleprompter() {
                         <span className="relative group">
                           <Info
                             size={16}
-                            className="text-neutral-500 hover:text-neutral-300 cursor-help"
+                            className="cursor-help text-neutral-500 hover:text-neutral-300"
                           />
-                          <span className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 px-3 py-2 text-sm font-normal text-neutral-200 bg-neutral-800 rounded shadow-lg whitespace-nowrap opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-opacity z-50">
+                          <span className="absolute bottom-full left-1/2 z-50 px-3 py-2 mb-2 text-sm font-normal whitespace-nowrap rounded shadow-lg opacity-0 transition-opacity -translate-x-1/2 pointer-events-none text-neutral-200 bg-neutral-800 group-hover:opacity-100 group-hover:pointer-events-auto">
                             How many words ahead to search when matching your
                             speech to the script
                           </span>
@@ -1411,7 +1473,7 @@ export default function Teleprompter() {
         {/* Drop zone indicator */}
         {isDragging && !isPlaying && (
           <div className="flex absolute inset-0 z-50 justify-center items-center bg-black/80">
-            <div className="p-8 text-center border-2 border-dashed rounded-lg border-neutral-500">
+            <div className="p-8 text-center rounded-lg border-2 border-dashed border-neutral-500">
               <p className="text-2xl font-bold text-neutral-300">
                 Drop markdown file here
               </p>
