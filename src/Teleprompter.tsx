@@ -18,12 +18,14 @@ interface VoiceModeContentProps {
   content: JSONContent;
   spokenWordCount: number;
   nextUnreadWordRef: React.MutableRefObject<HTMLSpanElement | null>;
+  onWordClick?: (wordIndex: number) => void;
 }
 
 function VoiceModeContent({
   content,
   spokenWordCount,
   nextUnreadWordRef,
+  onWordClick,
 }: VoiceModeContentProps) {
   const wordIndexRef = useRef(0);
 
@@ -65,13 +67,16 @@ function VoiceModeContent({
         }
       }
 
+      const thisWordIndex = wordIndex; // Capture for closure
       return (
         <span
           key={i}
           ref={wordIndex === spokenWordCount ? nextUnreadWordRef : undefined}
+          onClick={onWordClick ? () => onWordClick(thisWordIndex) : undefined}
           style={{
             opacity: wordIndex < spokenWordCount ? 0.3 : 1,
             transition: "opacity 0.5s ease-out",
+            cursor: onWordClick ? "pointer" : undefined,
           }}
         >
           {content}
@@ -495,6 +500,14 @@ export default function Teleprompter() {
       scrollRef.current.scrollTop = 0;
     }
   };
+
+  // Handle clicking on a word to jump to that position
+  const handleWordClick = useCallback((wordIndex: number) => {
+    setTargetWordCount(wordIndex);
+    setSpokenWordCount(wordIndex);
+    spokenCountRef.current = wordIndex;
+    resetTrackingState(); // Reset so algorithm doesn't fight the manual jump
+  }, []);
 
   useEffect(() => {
     if (isPlaying) {
@@ -1493,6 +1506,7 @@ export default function Teleprompter() {
                   content={editorJsonContent}
                   spokenWordCount={spokenWordCount}
                   nextUnreadWordRef={nextUnreadWordRef}
+                  onWordClick={handleWordClick}
                 />
               </div>
             ) : (
