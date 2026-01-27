@@ -1,11 +1,162 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import React, {
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  useMemo,
+} from "react";
 import { Rabbit, Type } from "lucide-react";
-import { useEditor, EditorContent } from "@tiptap/react";
+import { useEditor, EditorContent, JSONContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import { marked } from "marked";
 
 type Sentence = { raw: string; words: { text: string }[] };
+
+// Component to render rich content with word-level tracking for voice mode
+interface VoiceModeContentProps {
+  content: JSONContent;
+  spokenWordCount: number;
+  nextUnreadWordRef: React.MutableRefObject<HTMLSpanElement | null>;
+}
+
+function VoiceModeContent({
+  content,
+  spokenWordCount,
+  nextUnreadWordRef,
+}: VoiceModeContentProps) {
+  const wordIndexRef = useRef(0);
+
+  // Reset word index on each render
+  wordIndexRef.current = 0;
+
+  const renderTextWithWordTracking = (text: string, marks?: JSONContent[]) => {
+    const tokens = text.split(/(\s+)/);
+    return tokens.map((token, i) => {
+      const isWord = /\S/.test(token);
+      if (!isWord) {
+        return <React.Fragment key={i}>{token}</React.Fragment>;
+      }
+
+      const wordIndex = wordIndexRef.current;
+      wordIndexRef.current += 1;
+
+      let content: React.ReactNode = token;
+
+      // Apply marks (bold, italic, etc.)
+      if (marks) {
+        for (const mark of marks) {
+          if (mark.type === "bold") {
+            content = <strong key={`bold-${i}`}>{content}</strong>;
+          } else if (mark.type === "italic") {
+            content = <em key={`italic-${i}`}>{content}</em>;
+          } else if (mark.type === "strike") {
+            content = <s key={`strike-${i}`}>{content}</s>;
+          } else if (mark.type === "code") {
+            content = (
+              <code
+                key={`code-${i}`}
+                className="bg-neutral-800 px-1.5 py-0.5 rounded text-[0.9em]"
+              >
+                {content}
+              </code>
+            );
+          }
+        }
+      }
+
+      return (
+        <span
+          key={i}
+          ref={wordIndex === spokenWordCount ? nextUnreadWordRef : undefined}
+          style={wordIndex < spokenWordCount ? { opacity: 0.2 } : undefined}
+        >
+          {content}
+        </span>
+      );
+    });
+  };
+
+  const renderNode = (node: JSONContent, index: number): React.ReactNode => {
+    if (node.type === "text" && node.text) {
+      return (
+        <React.Fragment key={index}>
+          {renderTextWithWordTracking(
+            node.text,
+            node.marks as JSONContent[] | undefined,
+          )}
+        </React.Fragment>
+      );
+    }
+
+    const children = node.content?.map((child, i) => renderNode(child, i));
+
+    switch (node.type) {
+      case "doc":
+        return <React.Fragment key={index}>{children}</React.Fragment>;
+      case "paragraph":
+        return (
+          <p key={index} className="mb-4 last:mb-0">
+            {children}
+          </p>
+        );
+      case "heading":
+        const level = node.attrs?.level || 1;
+        const HeadingTag = `h${level}` as keyof JSX.IntrinsicElements;
+        const headingClasses =
+          level === 1
+            ? "text-[1.5em] font-bold mt-6 mb-4 first:mt-0"
+            : level === 2
+              ? "text-[1.3em] font-bold mt-5 mb-3 first:mt-0"
+              : "text-[1.15em] font-bold mt-4 mb-2 first:mt-0";
+        return (
+          <HeadingTag key={index} className={headingClasses}>
+            {children}
+          </HeadingTag>
+        );
+      case "bulletList":
+        return (
+          <ul key={index} className="list-disc pl-6 mb-4 space-y-1">
+            {children}
+          </ul>
+        );
+      case "orderedList":
+        return (
+          <ol key={index} className="list-decimal pl-6 mb-4 space-y-1">
+            {children}
+          </ol>
+        );
+      case "listItem":
+        return <li key={index}>{children}</li>;
+      case "blockquote":
+        return (
+          <blockquote
+            key={index}
+            className="border-l-4 border-neutral-500 pl-4 italic my-4"
+          >
+            {children}
+          </blockquote>
+        );
+      case "codeBlock":
+        return (
+          <pre
+            key={index}
+            className="bg-neutral-800 p-4 rounded overflow-x-auto mb-4 text-[0.85em]"
+          >
+            <code>{children}</code>
+          </pre>
+        );
+      case "horizontalRule":
+        return <hr key={index} className="border-neutral-600 my-6" />;
+      case "hardBreak":
+        return <br key={index} />;
+      default:
+        return <React.Fragment key={index}>{children}</React.Fragment>;
+    }
+  };
+
+  return <>{renderNode(content, 0)}</>;
+}
 
 function parseContentToSentences(content: string): {
   sentences: Sentence[];
@@ -24,9 +175,21 @@ function parseContentToSentences(content: string): {
         .split(/\s+/)
         .filter(Boolean)
         .map((text) => ({ text }));
-      sentences.push({ raw, words });
+      if (words.length > 0) {
+        sentences.push({ raw, words });
+      }
     } else if (i % 2 === 1) {
       separators.push(parts[i]);
+    }
+  }
+  // If no sentences were found (no punctuation in text), treat the whole content as one sentence
+  if (sentences.length === 0 && trimmed) {
+    const words = trimmed
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((text) => ({ text }));
+    if (words.length > 0) {
+      sentences.push({ raw: trimmed, words });
     }
   }
   return { sentences, separators };
@@ -96,6 +259,9 @@ export default function Teleprompter() {
   // Extract plain text content from editor for voice mode and other features
   const content = editor?.getText() || "";
 
+  // Get editor's JSON content for rich voice mode rendering
+  const editorJsonContent = editor?.getJSON();
+
   // Drag and drop handlers for markdown files
   const handleDragOver = useCallback(
     (e: React.DragEvent) => {
@@ -151,13 +317,12 @@ export default function Teleprompter() {
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const fatalErrorRef = useRef(false);
   const spokenCountRef = useRef(0);
-  const sentenceRefs = useRef<(HTMLSpanElement | null)[]>([]);
   const nextUnreadWordRef = useRef<HTMLSpanElement | null>(null);
   const recognizedSpeechRef = useRef<HTMLDivElement | null>(null);
   const scriptWordsRef = useRef<string[]>([]);
   const sentenceEndGlobalIndexRef = useRef<number[]>([]);
 
-  const { sentences, separators } = useMemo(
+  const { sentences } = useMemo(
     () => parseContentToSentences(content),
     [content],
   );
@@ -254,12 +419,7 @@ export default function Teleprompter() {
       VOICE_SUPPORTED,
       flatWordsLength: flatWords.length,
     });
-    if (
-      mode !== "voice" ||
-      !isPlaying ||
-      !VOICE_SUPPORTED ||
-      flatWords.length === 0
-    ) {
+    if (mode !== "voice" || !isPlaying || !VOICE_SUPPORTED) {
       console.log("[Voice] skipping start — will stop if was running", {
         mode,
         isPlaying,
@@ -295,8 +455,6 @@ export default function Teleprompter() {
     });
 
     recognition.onresult = (event: SpeechRecognitionEvent) => {
-      const scriptWords = scriptWordsRef.current;
-      if (scriptWords.length === 0) return;
       let fullTranscript = "";
       for (let i = 0; i < event.results.length; i++) {
         const r = event.results[i];
@@ -311,6 +469,9 @@ export default function Teleprompter() {
       const text = fullTranscript.trim();
       setRecognizedTranscript(text);
       if (!text) return;
+      
+      const scriptWords = scriptWordsRef.current;
+      if (scriptWords.length === 0) return;
       const spoken = text
         .split(/\s+/)
         .map((w) => normalizeWord(w))
@@ -860,53 +1021,17 @@ export default function Teleprompter() {
         )}
         <div className="px-8 pt-8 pb-32 mx-auto max-w-4xl md:pt-32">
           <div className="relative min-h-[50vh]">
-            {/* Voice mode when playing: word spans with fading for tracking */}
-            {isPlaying && mode === "voice" && sentences.length > 0 ? (
+            {/* Voice mode when playing: rich content with word-level fading for tracking */}
+            {isPlaying && mode === "voice" && editorJsonContent ? (
               <div
-                className={`text-neutral-100 select-none ${fontFamily === "sans" ? "font-sans" : fontFamily === "serif" ? "font-serif" : "font-mono"}`}
+                className={`tiptap-editor text-neutral-100 select-none ${fontFamily === "sans" ? "font-sans" : fontFamily === "serif" ? "font-serif" : "font-mono"}`}
                 style={{ fontSize: `${fontSize}px`, lineHeight }}
               >
-                {sentences.map((sentence, si) => {
-                  let globalIdx = 0;
-                  for (let i = 0; i < si; i++)
-                    globalIdx += sentences[i].words.length;
-                  const tokens = sentence.raw.split(/(\s+)/);
-                  let wordIdx = 0;
-                  return (
-                    <span
-                      key={si}
-                      ref={(el) => {
-                        sentenceRefs.current[si] = el;
-                      }}
-                      style={{ display: "inline" }}
-                    >
-                      {tokens.map((token, ti) => {
-                        const isWord = /\S/.test(token);
-                        const g = globalIdx + wordIdx;
-                        if (isWord) wordIdx += 1;
-                        return isWord ? (
-                          <span
-                            key={`${si}-${ti}`}
-                            ref={
-                              g === spokenWordCount
-                                ? nextUnreadWordRef
-                                : undefined
-                            }
-                            style={
-                              g < spokenWordCount ? { opacity: 0.2 } : undefined
-                            }
-                            aria-hidden
-                          >
-                            {token}
-                          </span>
-                        ) : (
-                          <span key={`${si}-${ti}`}>{token}</span>
-                        );
-                      })}
-                      {separators[si] != null ? separators[si] : null}
-                    </span>
-                  );
-                })}
+                <VoiceModeContent
+                  content={editorJsonContent}
+                  spokenWordCount={spokenWordCount}
+                  nextUnreadWordRef={nextUnreadWordRef}
+                />
               </div>
             ) : (
               /* Tiptap editor: WYSIWYG editing when paused, read-only rich display when playing */
