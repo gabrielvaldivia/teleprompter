@@ -723,39 +723,41 @@ export default function Teleprompter() {
           return { count: matches, endPos: lastMatchPos };
         };
 
-        // Check for BACKWARD match
-        // First: try single-word matching for distinctive words
-        for (const word of wordsToProcess) {
-          if (word.length >= 4) {
-            // Match words 4+ chars
-            const searchStart = Math.max(0, current - lookBehind);
-            // Look backwards from current position
-            for (let pos = current - 5; pos >= searchStart; pos--) {
-              if (wordsMatch(word, normalizedScript[pos])) {
-                scriptPos = pos + 1;
-                break;
+        // Check for BACKWARD match (skip in lines mode - user must click to go back)
+        if (!isLinesMode) {
+          // First: try single-word matching for distinctive words
+          for (const word of wordsToProcess) {
+            if (word.length >= 4) {
+              // Match words 4+ chars
+              const searchStart = Math.max(0, current - lookBehind);
+              // Look backwards from current position
+              for (let pos = current - 5; pos >= searchStart; pos--) {
+                if (wordsMatch(word, normalizedScript[pos])) {
+                  scriptPos = pos + 1;
+                  break;
+                }
               }
             }
           }
-        }
 
-        // Second: consecutive matching for more confident backward jumps
-        if (wordsToProcess.length >= 2 && scriptPos === current) {
-          const searchStart = Math.max(0, current - lookBehind);
-          let bestBackwardPos = -1;
-          let bestBackwardMatches = 0;
+          // Second: consecutive matching for more confident backward jumps
+          if (wordsToProcess.length >= 2 && scriptPos === current) {
+            const searchStart = Math.max(0, current - lookBehind);
+            let bestBackwardPos = -1;
+            let bestBackwardMatches = 0;
 
-          for (let pos = searchStart; pos < current - 3; pos++) {
-            const result = findConsecutiveMatches(0, pos, 2);
-            // Need 3+ consecutive matches to go back
-            if (result.count >= 3 && result.count > bestBackwardMatches) {
-              bestBackwardMatches = result.count;
-              bestBackwardPos = result.endPos + 1;
+            for (let pos = searchStart; pos < current - 3; pos++) {
+              const result = findConsecutiveMatches(0, pos, 2);
+              // Need 3+ consecutive matches to go back
+              if (result.count >= 3 && result.count > bestBackwardMatches) {
+                bestBackwardMatches = result.count;
+                bestBackwardPos = result.endPos + 1;
+              }
             }
-          }
 
-          if (bestBackwardPos >= 0 && bestBackwardPos < current) {
-            scriptPos = bestBackwardPos;
+            if (bestBackwardPos >= 0 && bestBackwardPos < current) {
+              scriptPos = bestBackwardPos;
+            }
           }
         }
 
