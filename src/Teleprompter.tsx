@@ -256,6 +256,7 @@ export default function Teleprompter() {
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [recognizedTranscript, setRecognizedTranscript] = useState("");
   const [showRecognizedSpeech, setShowRecognizedSpeech] = useState(true);
+  const [speechProvider, setSpeechProvider] = useState<"auto" | "deepgram" | "webspeech">("auto");
   const [voiceLookahead, setVoiceLookahead] = useState(
     DEFAULT_VOICE_LOOKAHEAD_WORDS,
   );
@@ -665,9 +666,17 @@ export default function Teleprompter() {
     [],
   );
 
+  // Determine which speech provider to actually use
+  const useDeepgram = useMemo(() => {
+    if (speechProvider === "webspeech") return false;
+    if (speechProvider === "deepgram") return USE_DEEPGRAM; // Only if available
+    // Auto: use Deepgram if available
+    return USE_DEEPGRAM;
+  }, [speechProvider]);
+
   // Deepgram voice recognition
   useEffect(() => {
-    if (mode !== "voice" || !isPlaying || !USE_DEEPGRAM) {
+    if (mode !== "voice" || !isPlaying || !useDeepgram) {
       // Cleanup Deepgram if it was running
       if (deepgramSocketRef.current) {
         deepgramSocketRef.current.close();
@@ -853,11 +862,11 @@ export default function Teleprompter() {
         mediaStreamRef.current = null;
       }
     };
-  }, [mode, isPlaying, processTranscript]);
+  }, [mode, isPlaying, processTranscript, useDeepgram]);
 
-  // Fallback: Browser Speech Recognition (when Deepgram not configured)
+  // Fallback: Browser Speech Recognition (when Deepgram not configured or user prefers it)
   useEffect(() => {
-    if (USE_DEEPGRAM) return; // Skip if using Deepgram
+    if (useDeepgram) return; // Skip if using Deepgram
 
     console.log("[Voice] Browser Speech API effect run", {
       mode,
@@ -913,9 +922,10 @@ export default function Teleprompter() {
       const displayText = (finalTranscript + interimTranscript).trim();
       setRecognizedTranscript(displayText);
 
-      const trackingText = finalTranscript.trim();
-      if (trackingText) {
-        processTranscript(trackingText, true);
+      // Process both final and interim results for responsive tracking
+      if (displayText) {
+        const isFinal = interimTranscript.length === 0 && finalTranscript.length > 0;
+        processTranscript(displayText, isFinal);
       }
     };
 
@@ -974,7 +984,7 @@ export default function Teleprompter() {
         recognitionRef.current = null;
       }
     };
-  }, [mode, isPlaying, flatWords.length, processTranscript]);
+  }, [mode, isPlaying, flatWords.length, processTranscript, useDeepgram]);
 
   // Smooth scroll with ease-in curve
   const scrollTargetRef = useRef<number | null>(null);
@@ -1201,6 +1211,51 @@ export default function Teleprompter() {
                     />
                   </div>
                 </div>
+
+                {VOICE_SUPPORTED && mode === "voice" && (
+                  <div className="flex flex-col gap-2 md:flex-row md:gap-6 md:justify-between md:items-center">
+                    <span className="font-bold text-neutral-300 shrink-0">
+                      SPEECH ENGINE
+                    </span>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setSpeechProvider("auto")}
+                        className={`px-3 py-1.5 text-sm font-medium transition-colors ${
+                          speechProvider === "auto"
+                            ? "bg-white text-neutral-900"
+                            : "bg-neutral-700 text-neutral-300 hover:bg-neutral-600"
+                        }`}
+                      >
+                        Auto
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSpeechProvider("deepgram")}
+                        disabled={!USE_DEEPGRAM}
+                        className={`px-3 py-1.5 text-sm font-medium transition-colors ${
+                          speechProvider === "deepgram"
+                            ? "bg-white text-neutral-900"
+                            : "bg-neutral-700 text-neutral-300 hover:bg-neutral-600"
+                        } ${!USE_DEEPGRAM ? "opacity-50 cursor-not-allowed" : ""}`}
+                      >
+                        Deepgram
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSpeechProvider("webspeech")}
+                        disabled={!VOICE_SUPPORTED}
+                        className={`px-3 py-1.5 text-sm font-medium transition-colors ${
+                          speechProvider === "webspeech"
+                            ? "bg-white text-neutral-900"
+                            : "bg-neutral-700 text-neutral-300 hover:bg-neutral-600"
+                        } ${!VOICE_SUPPORTED ? "opacity-50 cursor-not-allowed" : ""}`}
+                      >
+                        Web Speech
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 {VOICE_SUPPORTED && (
                   <div className="flex flex-col gap-2 md:flex-row md:gap-6 md:justify-between md:items-center">
