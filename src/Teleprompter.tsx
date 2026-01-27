@@ -69,7 +69,10 @@ function VoiceModeContent({
         <span
           key={i}
           ref={wordIndex === spokenWordCount ? nextUnreadWordRef : undefined}
-          style={wordIndex < spokenWordCount ? { opacity: 0.2 } : undefined}
+          style={{
+            opacity: wordIndex < spokenWordCount ? 0.3 : 1,
+            transition: 'opacity 0.5s ease-out',
+          }}
         >
           {content}
         </span>
@@ -238,7 +241,8 @@ export default function Teleprompter() {
   const [lineHeight, setLineHeight] = useState(1.5);
   const [elapsedTime, setElapsedTime] = useState(0);
   const [mode, setMode] = useState<"auto" | "voice">("auto");
-  const [spokenWordCount, setSpokenWordCount] = useState(0);
+  const [spokenWordCount, setSpokenWordCount] = useState(0); // Display position (animated)
+  const [targetWordCount, setTargetWordCount] = useState(0); // Target position (from algorithm)
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [recognizedTranscript, setRecognizedTranscript] = useState("");
   const [showRecognizedSpeech, setShowRecognizedSpeech] = useState(true);
@@ -331,6 +335,8 @@ export default function Teleprompter() {
   );
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  const animationFrameRef = useRef<number | null>(null);
+  const lastAnimationTimeRef = useRef<number>(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const animationRef = useRef<number | null>(null);
   const lastTimeRef = useRef<number>(0);
@@ -376,6 +382,58 @@ export default function Teleprompter() {
     voiceLookaheadRef.current = voiceLookahead;
   }, [voiceLookahead]);
 
+  // Smooth animation: move spokenWordCount toward targetWordCount
+  useEffect(() => {
+    if (mode !== "voice" || !isPlaying) {
+      // Not in voice mode - sync immediately
+      if (spokenWordCount !== targetWordCount) {
+        setSpokenWordCount(targetWordCount);
+      }
+      return;
+    }
+
+    const animate = (timestamp: number) => {
+      if (!lastAnimationTimeRef.current) {
+        lastAnimationTimeRef.current = timestamp;
+      }
+      
+      const delta = timestamp - lastAnimationTimeRef.current;
+      lastAnimationTimeRef.current = timestamp;
+      
+      setSpokenWordCount((current) => {
+        if (current === targetWordCount) {
+          return current;
+        }
+        
+        // Animation speed: words per second (slower = calmer)
+        const wordsPerSecond = 6;
+        const wordsThisFrame = (wordsPerSecond * delta) / 1000;
+        
+        if (current < targetWordCount) {
+          // Moving forward
+          const newPos = Math.min(current + Math.max(1, wordsThisFrame), targetWordCount);
+          return Math.round(newPos);
+        } else {
+          // Moving backward
+          const newPos = Math.max(current - Math.max(1, wordsThisFrame), targetWordCount);
+          return Math.round(newPos);
+        }
+      });
+      
+      animationFrameRef.current = requestAnimationFrame(animate);
+    };
+    
+    animationFrameRef.current = requestAnimationFrame(animate);
+    
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
+      lastAnimationTimeRef.current = 0;
+    };
+  }, [mode, isPlaying, targetWordCount]);
+
   useEffect(() => {
     if (mode !== "auto" || !isPlaying || !scrollRef.current) return;
 
@@ -418,6 +476,7 @@ export default function Teleprompter() {
     setElapsedTime(0);
     spokenCountRef.current = 0;
     setSpokenWordCount(0);
+    setTargetWordCount(0);
     setRecognizedTranscript("");
     setVoiceError(null);
     resetTrackingState(); // Reset the sequential tracking state
@@ -444,7 +503,7 @@ export default function Teleprompter() {
     };
   }, [isPlaying, mode]);
 
-  // Process transcript and update position using incremental matching
+  // Process transcript and update target position using incremental matching
   const processTranscript = useCallback((transcript: string, isFinal: boolean) => {
     const scriptWords = scriptWordsRef.current;
     const spokenWords = transcript.split(/\s+/).filter(Boolean);
@@ -462,26 +521,72 @@ export default function Teleprompter() {
     
     if (newWords.length === 0) return;
 
-    setSpokenWordCount((current) => {
+    setTargetWordCount((current) => {
       let scriptPos = current;
-      const maxSkip = 4; // Only look 4 words ahead - prevents jumping
+      const lookAhead = 150;  // Look far ahead (allows skipping multiple paragraphs)
+      const lookBehind = 150; // Look far behind (allows jumping back multiple paragraphs)
       
-      // Process each new word
+      // CONSERVATIVE: Check for going BACKWARD (requires high confidence)
+      // Need 3+ matching distinctive words to go back
+      if (newWords.length >= 3) {
+        const distinctiveWords = newWords.filter(w => w.length >= 5); // Only long words
+        if (distinctiveWords.length >= 2) {
+          const searchStart = Math.max(0, current - lookBehind);
+          
+          // Look for a cluster of distinctive words behind current position
+          for (let pos = searchStart; pos < current - 10; pos++) {
+            let matchCount = 0;
+            let lastMatchPos = pos;
+            
+            // Check how many distinctive words match in this region
+            for (const word of distinctiveWords) {
+              for (let offset = 0; offset <= 20 && pos + offset < current; offset++) {
+                if (normalizedScript[pos + offset] === word) {
+                  matchCount++;
+                  lastMatchPos = Math.max(lastMatchPos, pos + offset);
+                  break;
+                }
+              }
+            }
+            
+            // HIGH CONFIDENCE required to go back: 3+ distinctive word matches
+            if (matchCount >= 3) {
+              scriptPos = lastMatchPos + 1;
+              break;
+            }
+          }
+        }
+      }
+      
+      // AGGRESSIVE: Forward matching (lower confidence needed)
       for (const spokenWord of newWords) {
+        // For forward: accept words with 2+ characters
         if (spokenWord.length <= 1) continue;
         
-        // Try to match within small window ahead
-        for (let skip = 0; skip <= maxSkip && scriptPos + skip < normalizedScript.length; skip++) {
+        // Try to match ahead - aggressive, take first match
+        let matched = false;
+        for (let skip = 0; skip <= lookAhead && scriptPos + skip < normalizedScript.length; skip++) {
           if (normalizedScript[scriptPos + skip] === spokenWord) {
             scriptPos = scriptPos + skip + 1;
+            matched = true;
             break;
           }
         }
-        // If no match found, word is ignored (improvisation)
+        
+        // Only look behind for VERY distinctive words (6+ chars) if not found ahead
+        if (!matched && spokenWord.length >= 6) {
+          const searchStart = Math.max(0, scriptPos - lookBehind);
+          for (let pos = scriptPos - 1; pos >= searchStart; pos--) {
+            if (normalizedScript[pos] === spokenWord) {
+              scriptPos = pos + 1;
+              break;
+            }
+          }
+        }
       }
 
-      // Cap large jumps per update
-      const maxAdvance = isFinal ? VOICE_MAX_ADVANCE_PER_RESULT : 15;
+      // Cap large jumps forward, but allow going back freely
+      const maxAdvance = isFinal ? VOICE_MAX_ADVANCE_PER_RESULT : 25;
       const finalPosition = Math.min(scriptPos, current + maxAdvance);
       
       spokenCountRef.current = finalPosition;
@@ -773,6 +878,12 @@ export default function Teleprompter() {
     };
   }, [mode, isPlaying, flatWords.length, processTranscript]);
 
+  // Smooth scroll with ease-in curve
+  const scrollTargetRef = useRef<number | null>(null);
+  const scrollStartRef = useRef<number | null>(null);
+  const scrollStartTimeRef = useRef<number | null>(null);
+  const scrollAnimationRef = useRef<number | null>(null);
+  
   useEffect(() => {
     if (
       mode !== "voice" ||
@@ -783,18 +894,65 @@ export default function Teleprompter() {
     const container = scrollRef.current;
     const el = nextUnreadWordRef.current;
     if (!container || !el) return;
-    const timer = requestAnimationFrame(() => {
-      const cr = container.getBoundingClientRect();
-      const er = el.getBoundingClientRect();
-      const offsetFromTop = cr.height * 0.32;
-      const targetScrollTop =
-        container.scrollTop + (er.top - cr.top) - offsetFromTop;
-      container.scrollTo({
-        top: Math.max(0, targetScrollTop),
-        behavior: "smooth",
-      });
-    });
-    return () => cancelAnimationFrame(timer);
+    
+    // Calculate target scroll position
+    const cr = container.getBoundingClientRect();
+    const er = el.getBoundingClientRect();
+    const offsetFromTop = cr.height * 0.32;
+    const targetScrollTop = Math.max(0, container.scrollTop + (er.top - cr.top) - offsetFromTop);
+    
+    // Set new target and reset animation start
+    const currentScroll = container.scrollTop;
+    if (scrollTargetRef.current !== targetScrollTop) {
+      scrollTargetRef.current = targetScrollTop;
+      scrollStartRef.current = currentScroll;
+      scrollStartTimeRef.current = null; // Will be set on first frame
+    }
+    
+    // Start smooth scroll animation if not already running
+    if (scrollAnimationRef.current) return;
+    
+    const animateScroll = (timestamp: number) => {
+      const container = scrollRef.current;
+      const target = scrollTargetRef.current;
+      const start = scrollStartRef.current;
+      
+      if (!container || target === null || start === null) {
+        scrollAnimationRef.current = null;
+        return;
+      }
+      
+      // Initialize start time
+      if (scrollStartTimeRef.current === null) {
+        scrollStartTimeRef.current = timestamp;
+      }
+      
+      const elapsed = timestamp - scrollStartTimeRef.current;
+      const duration = 800; // Animation duration in ms
+      const progress = Math.min(elapsed / duration, 1);
+      
+      // Ease-in curve (quadratic): starts slow, accelerates
+      const easedProgress = progress * progress;
+      
+      // Calculate current position
+      const diff = target - start;
+      const newScrollTop = start + diff * easedProgress;
+      
+      container.scrollTop = newScrollTop;
+      
+      // Continue or finish
+      if (progress < 1) {
+        scrollAnimationRef.current = requestAnimationFrame(animateScroll);
+      } else {
+        scrollAnimationRef.current = null;
+      }
+    };
+    
+    scrollAnimationRef.current = requestAnimationFrame(animateScroll);
+    
+    return () => {
+      // Don't cancel - let animation continue smoothly
+    };
   }, [mode, spokenWordCount, flatWords.length]);
 
   useEffect(() => {
@@ -955,6 +1113,7 @@ export default function Teleprompter() {
                           setMode("auto");
                           spokenCountRef.current = 0;
                           setSpokenWordCount(0);
+                          setTargetWordCount(0);
                           setRecognizedTranscript("");
                         }}
                         className={`flex-1 md:flex-initial px-4 py-2 text-sm font-bold ${mode === "auto" ? "bg-white text-black" : "bg-neutral-700 text-neutral-300 hover:bg-neutral-600"}`}
@@ -968,6 +1127,7 @@ export default function Teleprompter() {
                           setIsPlaying(false);
                           spokenCountRef.current = 0;
                           setSpokenWordCount(0);
+                          setTargetWordCount(0);
                           setRecognizedTranscript("");
                           setVoiceError(null);
                           resetTrackingState();
