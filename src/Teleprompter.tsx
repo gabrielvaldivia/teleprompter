@@ -5,7 +5,7 @@ import React, {
   useCallback,
   useMemo,
 } from "react";
-import { Rabbit, Type } from "lucide-react";
+import { Rabbit, Type, Info } from "lucide-react";
 import { useEditor, EditorContent, JSONContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
@@ -203,8 +203,8 @@ const VOICE_SUPPORTED =
   typeof window !== "undefined" &&
   (window.SpeechRecognition != null || window.webkitSpeechRecognition != null);
 
-/** When matching transcript → script, only look this many words ahead for each transcript word. */
-const VOICE_LOOKAHEAD_WORDS = 12;
+/** Default lookahead words for voice matching. */
+const DEFAULT_VOICE_LOOKAHEAD_WORDS = 12;
 /** Max new words we can mark as spoken in a single recognition result. */
 const VOICE_MAX_ADVANCE_PER_RESULT = 20;
 
@@ -225,6 +225,7 @@ export default function Teleprompter() {
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [recognizedTranscript, setRecognizedTranscript] = useState("");
   const [showRecognizedSpeech, setShowRecognizedSpeech] = useState(true);
+  const [voiceLookahead, setVoiceLookahead] = useState(DEFAULT_VOICE_LOOKAHEAD_WORDS);
   const [mobileBottomInset, setMobileBottomInset] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
 
@@ -321,6 +322,7 @@ export default function Teleprompter() {
   const recognizedSpeechRef = useRef<HTMLDivElement | null>(null);
   const scriptWordsRef = useRef<string[]>([]);
   const sentenceEndGlobalIndexRef = useRef<number[]>([]);
+  const voiceLookaheadRef = useRef(DEFAULT_VOICE_LOOKAHEAD_WORDS);
 
   const { sentences } = useMemo(
     () => parseContentToSentences(content),
@@ -344,6 +346,10 @@ export default function Teleprompter() {
     scriptWordsRef.current = flatWords;
     sentenceEndGlobalIndexRef.current = sentenceEndGlobalIndices;
   }, [flatWords, sentenceEndGlobalIndices]);
+
+  useEffect(() => {
+    voiceLookaheadRef.current = voiceLookahead;
+  }, [voiceLookahead]);
 
   useEffect(() => {
     if (mode !== "auto" || !isPlaying || !scrollRef.current) return;
@@ -481,7 +487,7 @@ export default function Teleprompter() {
       // words and advance too far. Lookahead limits how far each transcript word can reach.
       let idx = 0;
       for (const word of spoken) {
-        const limit = Math.min(scriptWords.length, idx + VOICE_LOOKAHEAD_WORDS);
+        const limit = Math.min(scriptWords.length, idx + voiceLookaheadRef.current);
         let found = -1;
         for (let j = idx; j < limit; j++) {
           if (normalizeWord(scriptWords[j]) === word) {
@@ -677,85 +683,6 @@ export default function Teleprompter() {
           <div className="overflow-y-auto flex-1">
             <div className="px-8 py-8 mx-auto space-y-6 max-w-4xl">
               <div className="space-y-6">
-                {VOICE_SUPPORTED && (
-                  <div className="flex flex-col gap-2 md:flex-row md:gap-6 md:justify-between md:items-center">
-                    <label className="font-bold text-neutral-300 shrink-0">
-                      MODE
-                    </label>
-                    <span className="flex gap-2 items-center w-full md:w-auto">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setMode("auto");
-                          spokenCountRef.current = 0;
-                          setSpokenWordCount(0);
-                          setRecognizedTranscript("");
-                        }}
-                        className={`flex-1 md:flex-initial px-4 py-2 text-sm font-bold ${mode === "auto" ? "bg-white text-black" : "bg-neutral-700 text-neutral-300 hover:bg-neutral-600"}`}
-                      >
-                        Auto
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setMode("voice");
-                          setIsPlaying(false);
-                          spokenCountRef.current = 0;
-                          setSpokenWordCount(0);
-                          setRecognizedTranscript("");
-                          setVoiceError(null);
-                        }}
-                        className={`flex-1 md:flex-initial px-4 py-2 text-sm font-bold ${mode === "voice" ? "bg-white text-black" : "bg-neutral-700 text-neutral-300 hover:bg-neutral-600"}`}
-                      >
-                        Voice
-                      </button>
-                    </span>
-                  </div>
-                )}
-
-                {mode === "voice" && (
-                  <div className="flex flex-row gap-2 justify-between items-center pt-3 md:gap-6">
-                    <span className="font-bold text-neutral-300 shrink-0">
-                      TRANSCRIPT
-                    </span>
-                    <button
-                      type="button"
-                      id="show-recognized-speech"
-                      role="switch"
-                      aria-checked={showRecognizedSpeech}
-                      onClick={() => setShowRecognizedSpeech((v) => !v)}
-                      className={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors focus:outline-none ${showRecognizedSpeech ? "bg-white" : "bg-neutral-600"}`}
-                    >
-                      <span
-                        className={`pointer-events-none inline-block h-5 w-5 shrink-0 rounded-full bg-neutral-900 ring-0 transition-transform ${showRecognizedSpeech ? "translate-x-6" : "translate-x-1"}`}
-                      />
-                    </button>
-                  </div>
-                )}
-
-                <div className="flex flex-col gap-2 md:flex-row md:gap-6 md:justify-between md:items-center">
-                  <label className="w-32 font-bold text-neutral-300 shrink-0">
-                    SPEED
-                  </label>
-                  <div
-                    className="flex flex-row-reverse items-center w-full md:flex-row md:flex-1 md:min-w-0 md:max-w-xs"
-                    style={{ gap: 10 }}
-                  >
-                    <span className="w-14 tabular-nums text-right text-neutral-300 shrink-0">
-                      {speed}%
-                    </span>
-                    <input
-                      type="range"
-                      min="10"
-                      max="200"
-                      value={speed}
-                      onChange={(e) => setSpeed(Number(e.target.value))}
-                      className="flex-1 min-w-0 h-1 appearance-none bg-neutral-600"
-                      style={{ accentColor: "#a3a3a3" }}
-                    />
-                  </div>
-                </div>
-
                 <div className="flex flex-col gap-2 md:flex-row md:gap-6 md:justify-between md:items-center">
                   <label className="font-bold text-neutral-300 shrink-0">
                     FONT
@@ -820,6 +747,120 @@ export default function Teleprompter() {
                     />
                   </div>
                 </div>
+
+                {VOICE_SUPPORTED && (
+                  <div className="flex flex-col gap-2 md:flex-row md:gap-6 md:justify-between md:items-center">
+                    <label className="font-bold text-neutral-300 shrink-0">
+                      MODE
+                    </label>
+                    <span className="flex gap-2 items-center w-full md:w-auto">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMode("auto");
+                          spokenCountRef.current = 0;
+                          setSpokenWordCount(0);
+                          setRecognizedTranscript("");
+                        }}
+                        className={`flex-1 md:flex-initial px-4 py-2 text-sm font-bold ${mode === "auto" ? "bg-white text-black" : "bg-neutral-700 text-neutral-300 hover:bg-neutral-600"}`}
+                      >
+                        Auto
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMode("voice");
+                          setIsPlaying(false);
+                          spokenCountRef.current = 0;
+                          setSpokenWordCount(0);
+                          setRecognizedTranscript("");
+                          setVoiceError(null);
+                        }}
+                        className={`flex-1 md:flex-initial px-4 py-2 text-sm font-bold ${mode === "voice" ? "bg-white text-black" : "bg-neutral-700 text-neutral-300 hover:bg-neutral-600"}`}
+                      >
+                        Voice
+                      </button>
+                    </span>
+                  </div>
+                )}
+
+                {mode === "auto" && (
+                  <div className="flex flex-col gap-2 md:flex-row md:gap-6 md:justify-between md:items-center">
+                    <label className="w-32 font-bold text-neutral-300 shrink-0">
+                      SPEED
+                    </label>
+                    <div
+                      className="flex flex-row-reverse items-center w-full md:flex-row md:flex-1 md:min-w-0 md:max-w-xs"
+                      style={{ gap: 10 }}
+                    >
+                      <span className="w-14 tabular-nums text-right text-neutral-300 shrink-0">
+                        {speed}%
+                      </span>
+                      <input
+                        type="range"
+                        min="10"
+                        max="200"
+                        value={speed}
+                        onChange={(e) => setSpeed(Number(e.target.value))}
+                        className="flex-1 min-w-0 h-1 appearance-none bg-neutral-600"
+                        style={{ accentColor: "#a3a3a3" }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {mode === "voice" && (
+                  <>
+                    <div className="flex flex-row gap-2 justify-between items-center md:gap-6">
+                      <span className="font-bold text-neutral-300 shrink-0">
+                        TRANSCRIPT
+                      </span>
+                      <button
+                        type="button"
+                        id="show-recognized-speech"
+                        role="switch"
+                        aria-checked={showRecognizedSpeech}
+                        onClick={() => setShowRecognizedSpeech((v) => !v)}
+                        className={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors focus:outline-none ${showRecognizedSpeech ? "bg-white" : "bg-neutral-600"}`}
+                      >
+                        <span
+                          className={`pointer-events-none inline-block h-5 w-5 shrink-0 rounded-full bg-neutral-900 ring-0 transition-transform ${showRecognizedSpeech ? "translate-x-6" : "translate-x-1"}`}
+                        />
+                      </button>
+                    </div>
+                    <div className="flex flex-col gap-2 md:flex-row md:gap-6 md:justify-between md:items-center">
+                      <label className="flex gap-1.5 items-center font-bold text-neutral-300 shrink-0">
+                        LOOKAHEAD
+                        <span className="relative group">
+                          <Info
+                            size={16}
+                            className="text-neutral-500 hover:text-neutral-300 cursor-help"
+                          />
+                          <span className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 px-3 py-2 text-sm font-normal text-neutral-200 bg-neutral-800 rounded shadow-lg whitespace-nowrap opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-opacity z-50">
+                            How many words ahead to search when matching your speech to the script
+                          </span>
+                        </span>
+                      </label>
+                      <div
+                        className="flex flex-row-reverse items-center w-full md:flex-row md:flex-1 md:min-w-0 md:max-w-xs"
+                        style={{ gap: 10 }}
+                      >
+                        <span className="w-14 tabular-nums text-right text-neutral-300 shrink-0">
+                          {voiceLookahead}
+                        </span>
+                        <input
+                          type="range"
+                          min="4"
+                          max="30"
+                          value={voiceLookahead}
+                          onChange={(e) => setVoiceLookahead(Number(e.target.value))}
+                          className="flex-1 min-w-0 h-1 appearance-none bg-neutral-600"
+                          style={{ accentColor: "#a3a3a3" }}
+                        />
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           </div>
