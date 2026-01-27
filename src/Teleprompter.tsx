@@ -20,6 +20,7 @@ interface VoiceModeContentProps {
   spokenWordCount: number;
   nextUnreadWordRef: React.MutableRefObject<HTMLSpanElement | null>;
   onWordClick?: (wordIndex: number) => void;
+  fadeMode?: "none" | "words" | "lines";
 }
 
 function VoiceModeContent({
@@ -27,13 +28,30 @@ function VoiceModeContent({
   spokenWordCount,
   nextUnreadWordRef,
   onWordClick,
+  fadeMode = "words",
 }: VoiceModeContentProps) {
   const wordIndexRef = useRef(0);
+  const wordRefsMap = useRef<Map<number, HTMLSpanElement>>(new Map());
+  const [currentLineTop, setCurrentLineTop] = useState<number | null>(null);
 
   // Reset word index on each render
   wordIndexRef.current = 0;
 
-  const renderTextWithWordTracking = (text: string, marks?: JSONContent[]) => {
+  // Measure current word's line position after render
+  useEffect(() => {
+    if (fadeMode !== "lines") return;
+    
+    const currentWordEl = wordRefsMap.current.get(spokenWordCount);
+    if (currentWordEl) {
+      const rect = currentWordEl.getBoundingClientRect();
+      setCurrentLineTop(rect.top);
+    }
+  }, [spokenWordCount, fadeMode]);
+
+  const renderTextWithWordTracking = (
+    text: string,
+    marks?: JSONContent[],
+  ) => {
     const tokens = text.split(/(\s+)/);
     return tokens.map((token, i) => {
       const isWord = /\S/.test(token);
@@ -69,13 +87,26 @@ function VoiceModeContent({
       }
 
       const thisWordIndex = wordIndex; // Capture for closure
+
       return (
         <span
           key={i}
-          ref={wordIndex === spokenWordCount ? nextUnreadWordRef : undefined}
+          ref={(el) => {
+            if (el) {
+              wordRefsMap.current.set(wordIndex, el);
+            }
+            if (wordIndex === spokenWordCount && nextUnreadWordRef) {
+              nextUnreadWordRef.current = el;
+            }
+          }}
           onClick={onWordClick ? () => onWordClick(thisWordIndex) : undefined}
+          data-word-index={wordIndex}
+          className={fadeMode === "lines" ? "voice-word" : undefined}
           style={{
-            opacity: wordIndex < spokenWordCount ? 0.3 : 1,
+            opacity:
+              fadeMode === "words" && wordIndex < spokenWordCount
+                ? 0.3
+                : undefined, // For "lines" mode, CSS handles it
             transition: "opacity 0.5s ease-out",
             cursor: onWordClick ? "pointer" : undefined,
           }}
@@ -86,7 +117,27 @@ function VoiceModeContent({
     });
   };
 
-  const renderNode = (node: JSONContent, index: number): React.ReactNode => {
+  // For "lines" mode, inject CSS to fade words on previous visual lines
+  useEffect(() => {
+    if (fadeMode !== "lines" || currentLineTop === null) return;
+
+    // Update opacity for all words based on their visual line
+    wordRefsMap.current.forEach((el) => {
+      const rect = el.getBoundingClientRect();
+      // Word is on a previous line if its top is significantly above the current word's top
+      // Using a small threshold to account for minor positioning differences
+      if (rect.top < currentLineTop - 5) {
+        el.style.opacity = "0.3";
+      } else {
+        el.style.opacity = "1";
+      }
+    });
+  }, [fadeMode, currentLineTop, spokenWordCount]);
+
+  const renderNode = (
+    node: JSONContent,
+    index: number,
+  ): React.ReactNode => {
     if (node.type === "text" && node.text) {
       return (
         <React.Fragment key={index}>
@@ -98,7 +149,9 @@ function VoiceModeContent({
       );
     }
 
-    const children = node.content?.map((child, i) => renderNode(child, i));
+    const children = node.content?.map((child, i) =>
+      renderNode(child, i),
+    );
 
     switch (node.type) {
       case "doc":
@@ -218,24 +271,26 @@ function getPhoneticCodes(word: string): [string, string] {
 function wordsMatchPhonetically(word1: string, word2: string): boolean {
   // Skip short words - too many false positives
   if (word1.length < 4 || word2.length < 4) return false;
-  
+
   const [primary1, secondary1] = getPhoneticCodes(word1);
   const [primary2, secondary2] = getPhoneticCodes(word2);
-  
+
   // Match if any codes match (primary-primary, primary-secondary, etc.)
   if (primary1 && primary2 && primary1 === primary2) return true;
   if (primary1 && secondary2 && primary1 === secondary2) return true;
   if (secondary1 && primary2 && secondary1 === primary2) return true;
   if (secondary1 && secondary2 && secondary1 === secondary2) return true;
-  
+
   return false;
 }
 
 // Track how many spoken words we've processed (for incremental matching)
 let lastProcessedWordCount = 0;
+let lastTranscriptTime = 0;
 
 function resetTrackingState() {
   lastProcessedWordCount = 0;
+  lastTranscriptTime = 0;
 }
 
 /** Check if we have a Deepgram API key configured (local dev) */
@@ -280,7 +335,10 @@ export default function Teleprompter() {
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [recognizedTranscript, setRecognizedTranscript] = useState("");
   const [showRecognizedSpeech, setShowRecognizedSpeech] = useState(true);
-  const [speechProvider, setSpeechProvider] = useState<"auto" | "deepgram" | "webspeech">("auto");
+  const [fadeMode, setFadeMode] = useState<"none" | "words" | "lines">("words");
+  const [speechProvider, setSpeechProvider] = useState<
+    "auto" | "deepgram" | "webspeech"
+  >("auto");
   const [voiceLookahead, setVoiceLookahead] = useState(
     DEFAULT_VOICE_LOOKAHEAD_WORDS,
   );
@@ -383,6 +441,7 @@ export default function Teleprompter() {
   const scriptWordsRef = useRef<string[]>([]);
   const sentenceEndGlobalIndexRef = useRef<number[]>([]);
   const voiceLookaheadRef = useRef(DEFAULT_VOICE_LOOKAHEAD_WORDS);
+  const fadeModeRef = useRef<"none" | "words" | "lines">("words");
 
   // Deepgram refs
   const deepgramSocketRef = useRef<WebSocket | null>(null);
@@ -416,6 +475,10 @@ export default function Teleprompter() {
   useEffect(() => {
     voiceLookaheadRef.current = voiceLookahead;
   }, [voiceLookahead]);
+
+  useEffect(() => {
+    fadeModeRef.current = fadeMode;
+  }, [fadeMode]);
 
   // Smooth animation: move spokenWordCount toward targetWordCount
   useEffect(() => {
@@ -526,8 +589,25 @@ export default function Teleprompter() {
     }
   };
 
+  // Scroll animation refs (declared early so handleWordClick can cancel animations)
+  const scrollTargetRef = useRef<number | null>(null);
+  const scrollStartRef = useRef<number | null>(null);
+  const scrollStartTimeRef = useRef<number | null>(null);
+  const scrollAnimationRef = useRef<number | null>(null);
+  const isSnapScrollRef = useRef(false); // Fast scroll for click-to-jump
+
   // Handle clicking on a word to jump to that position
   const handleWordClick = useCallback((wordIndex: number) => {
+    // Cancel any ongoing scroll animation
+    if (scrollAnimationRef.current) {
+      cancelAnimationFrame(scrollAnimationRef.current);
+      scrollAnimationRef.current = null;
+    }
+    scrollTargetRef.current = null;
+    scrollStartRef.current = null;
+    scrollStartTimeRef.current = null;
+    isSnapScrollRef.current = true; // Use fast animation for snapping
+
     setTargetWordCount(wordIndex);
     setSpokenWordCount(wordIndex);
     spokenCountRef.current = wordIndex;
@@ -566,20 +646,33 @@ export default function Teleprompter() {
         .map(normalizeWord)
         .filter((w) => w.length > 0);
 
-      // Only process NEW words since last call (prevents re-matching)
+      // Process new words, but also always consider the last few words for re-matching
       const newWordsStart = Math.min(
         lastProcessedWordCount,
         normalizedSpoken.length,
       );
       const newWords = normalizedSpoken.slice(newWordsStart);
+
+      // Also get the last 5 words of the transcript for re-matching if stuck
+      const recentWords = normalizedSpoken.slice(-5);
       lastProcessedWordCount = normalizedSpoken.length;
 
-      if (newWords.length === 0) return;
+      // Detect pause - if more than 1 second since last transcript, relax matching
+      const now = Date.now();
+      const timeSinceLastTranscript = now - lastTranscriptTime;
+      const isPaused = lastTranscriptTime > 0 && timeSinceLastTranscript > 1000;
+      lastTranscriptTime = now;
+
+      // Use recent words if no new words (prevents getting stuck)
+      const wordsToProcess = newWords.length > 0 ? newWords : recentWords;
+      if (wordsToProcess.length === 0) return;
 
       setTargetWordCount((current) => {
         let scriptPos = current;
-        const lookAhead = 100;
-        const lookBehind = 100;
+        const isLinesMode = fadeModeRef.current === "lines";
+        // More conservative settings in lines mode
+        const lookAhead = isLinesMode ? 30 : 100;
+        const lookBehind = isLinesMode ? 30 : 100;
 
         // Helper: check if two words match (exact or phonetic)
         const wordsMatch = (spoken: string, script: string): boolean => {
@@ -596,19 +689,27 @@ export default function Teleprompter() {
         const findConsecutiveMatches = (
           spokenStart: number,
           scriptStart: number,
-          maxGap: number = 2
+          maxGap: number = 3, // Allow skipping up to 3 words in script
         ): { count: number; endPos: number } => {
           let matches = 0;
           let scriptIdx = scriptStart;
           let lastMatchPos = scriptStart;
 
-          for (let i = spokenStart; i < newWords.length && scriptIdx < normalizedScript.length; i++) {
-            const word = newWords[i];
-            if (word.length <= 2) continue; // Skip tiny words
+          for (
+            let i = spokenStart;
+            i < wordsToProcess.length && scriptIdx < normalizedScript.length;
+            i++
+          ) {
+            const word = wordsToProcess[i];
+            if (word.length <= 1) continue; // Skip single-char words only
 
             // Look for this word within a small gap (exact or phonetic match)
             let found = false;
-            for (let gap = 0; gap <= maxGap && scriptIdx + gap < normalizedScript.length; gap++) {
+            for (
+              let gap = 0;
+              gap <= maxGap && scriptIdx + gap < normalizedScript.length;
+              gap++
+            ) {
               if (wordsMatch(word, normalizedScript[scriptIdx + gap])) {
                 matches++;
                 lastMatchPos = scriptIdx + gap;
@@ -623,9 +724,10 @@ export default function Teleprompter() {
         };
 
         // Check for BACKWARD match
-        // First: try single-word matching for long distinctive words
-        for (const word of newWords) {
-          if (word.length >= 6) { // Only match distinctive words (6+ chars)
+        // First: try single-word matching for distinctive words
+        for (const word of wordsToProcess) {
+          if (word.length >= 4) {
+            // Match words 4+ chars
             const searchStart = Math.max(0, current - lookBehind);
             // Look backwards from current position
             for (let pos = current - 5; pos >= searchStart; pos--) {
@@ -638,7 +740,7 @@ export default function Teleprompter() {
         }
 
         // Second: consecutive matching for more confident backward jumps
-        if (newWords.length >= 2 && scriptPos === current) {
+        if (wordsToProcess.length >= 2 && scriptPos === current) {
           const searchStart = Math.max(0, current - lookBehind);
           let bestBackwardPos = -1;
           let bestBackwardMatches = 0;
@@ -658,11 +760,53 @@ export default function Teleprompter() {
         }
 
         // Check for FORWARD match
-        // First: try single-word matching for long distinctive words (immediate response)
-        for (const word of newWords) {
-          if (word.length >= 6) { // Only match distinctive words (6+ chars)
-            // Look in a larger window ahead to allow skipping sentences
-            for (let pos = scriptPos; pos < scriptPos + lookAhead && pos < normalizedScript.length; pos++) {
+        // After a pause, be more lenient - match any word immediately ahead
+        if (isPaused) {
+          const pauseMinLength = isLinesMode ? 4 : 2;
+          const pauseWindow = isLinesMode ? 5 : 10;
+          for (const word of wordsToProcess) {
+            if (word.length >= pauseMinLength) {
+              for (
+                let pos = scriptPos;
+                pos < scriptPos + pauseWindow && pos < normalizedScript.length;
+                pos++
+              ) {
+                if (wordsMatch(word, normalizedScript[pos])) {
+                  scriptPos = pos + 1;
+                  break;
+                }
+              }
+            }
+          }
+        }
+
+        // Regular matching: try single-word matching for distinctive words
+        // More conservative in lines mode to prevent jumping
+        const minWordLength = isLinesMode ? 5 : 3;
+        const smallWindow = isLinesMode ? 5 : 15;
+        const longWordLength = isLinesMode ? 7 : 5;
+
+        for (const word of wordsToProcess) {
+          if (word.length >= minWordLength) {
+            // Match words in a moderate window
+            for (
+              let pos = scriptPos;
+              pos < scriptPos + smallWindow && pos < normalizedScript.length;
+              pos++
+            ) {
+              if (wordsMatch(word, normalizedScript[pos])) {
+                scriptPos = pos + 1;
+                break;
+              }
+            }
+          }
+          // For longer words, also search further ahead
+          if (word.length >= longWordLength) {
+            for (
+              let pos = scriptPos;
+              pos < scriptPos + lookAhead && pos < normalizedScript.length;
+              pos++
+            ) {
               if (wordsMatch(word, normalizedScript[pos])) {
                 scriptPos = pos + 1;
                 break;
@@ -672,20 +816,28 @@ export default function Teleprompter() {
         }
 
         // Second: consecutive matching for more confident jumps
-        if (newWords.length >= 2) {
+        const minConsecutiveMatches = isLinesMode ? 3 : 2;
+        if (wordsToProcess.length >= 2) {
           let bestForwardPos = scriptPos;
           let bestForwardMatches = 0;
 
-          for (let pos = scriptPos; pos < scriptPos + lookAhead && pos < normalizedScript.length; pos++) {
+          for (
+            let pos = scriptPos;
+            pos < scriptPos + lookAhead && pos < normalizedScript.length;
+            pos++
+          ) {
             const result = findConsecutiveMatches(0, pos, 2);
-            // Need 2+ consecutive matches to advance further
-            if (result.count >= 2 && result.count > bestForwardMatches) {
+            // Need more consecutive matches in lines mode
+            if (
+              result.count >= minConsecutiveMatches &&
+              result.count > bestForwardMatches
+            ) {
               bestForwardMatches = result.count;
               bestForwardPos = result.endPos + 1;
             }
           }
 
-          if (bestForwardMatches >= 2) {
+          if (bestForwardMatches >= minConsecutiveMatches) {
             scriptPos = bestForwardPos;
           }
         }
@@ -959,7 +1111,8 @@ export default function Teleprompter() {
 
       // Process both final and interim results for responsive tracking
       if (displayText) {
-        const isFinal = interimTranscript.length === 0 && finalTranscript.length > 0;
+        const isFinal =
+          interimTranscript.length === 0 && finalTranscript.length > 0;
         processTranscript(displayText, isFinal);
       }
     };
@@ -1021,12 +1174,7 @@ export default function Teleprompter() {
     };
   }, [mode, isPlaying, flatWords.length, processTranscript, useDeepgram]);
 
-  // Smooth scroll with ease-in curve
-  const scrollTargetRef = useRef<number | null>(null);
-  const scrollStartRef = useRef<number | null>(null);
-  const scrollStartTimeRef = useRef<number | null>(null);
-  const scrollAnimationRef = useRef<number | null>(null);
-
+  // Smooth scroll animation for voice mode
   useEffect(() => {
     if (
       mode !== "voice" ||
@@ -1049,10 +1197,19 @@ export default function Teleprompter() {
 
     // Set new target and reset animation start
     const currentScroll = container.scrollTop;
-    if (scrollTargetRef.current !== targetScrollTop) {
+    
+    // Only scroll forward during voice tracking (backwards scroll requires click-to-snap)
+    const isScrollingBackward = targetScrollTop < currentScroll;
+    const allowBackwardScroll = isSnapScrollRef.current; // Only snap clicks can go backward
+    
+    if (scrollTargetRef.current !== targetScrollTop && (!isScrollingBackward || allowBackwardScroll)) {
       scrollTargetRef.current = targetScrollTop;
       scrollStartRef.current = currentScroll;
       scrollStartTimeRef.current = null; // Will be set on first frame
+      // Only reset snap mode if starting a new animation (voice tracking)
+      if (!scrollAnimationRef.current) {
+        isSnapScrollRef.current = false;
+      }
     }
 
     // Start smooth scroll animation if not already running
@@ -1074,14 +1231,16 @@ export default function Teleprompter() {
       }
 
       const elapsed = timestamp - scrollStartTimeRef.current;
-      const duration = 1800; // Animation duration in ms (slower = smoother)
+      // Fast animation for click-to-snap, slow for voice tracking
+      const duration = isSnapScrollRef.current ? 100 : 1800;
       const progress = Math.min(elapsed / duration, 1);
 
-      // Ease-in-out curve: smooth start and end
-      const easedProgress =
-        progress < 0.5
+      // Ease-out for snap (fast start), ease-in-out for voice tracking (smooth)
+      const easedProgress = isSnapScrollRef.current
+        ? 1 - Math.pow(1 - progress, 2) // ease-out
+        : progress < 0.5
           ? 2 * progress * progress
-          : 1 - Math.pow(-2 * progress + 2, 2) / 2;
+          : 1 - Math.pow(-2 * progress + 2, 2) / 2; // ease-in-out
 
       // Calculate current position
       const diff = target - start;
@@ -1094,6 +1253,7 @@ export default function Teleprompter() {
         scrollAnimationRef.current = requestAnimationFrame(animateScroll);
       } else {
         scrollAnimationRef.current = null;
+        isSnapScrollRef.current = false; // Reset snap mode when done
       }
     };
 
@@ -1361,23 +1521,47 @@ export default function Teleprompter() {
 
                 {mode === "voice" && (
                   <>
-                    <div className="flex flex-row gap-2 justify-between items-center md:gap-6">
+                    <div className="flex flex-col gap-2 md:flex-row md:gap-6 md:justify-between md:items-center">
                       <span className="font-bold text-neutral-300 shrink-0">
-                        TRANSCRIPT
+                        FADE
                       </span>
-                      <button
-                        type="button"
-                        id="show-recognized-speech"
-                        role="switch"
-                        aria-checked={showRecognizedSpeech}
-                        onClick={() => setShowRecognizedSpeech((v) => !v)}
-                        className={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors focus:outline-none ${showRecognizedSpeech ? "bg-white" : "bg-neutral-600"}`}
-                      >
-                        <span
-                          className={`pointer-events-none inline-block h-5 w-5 shrink-0 rounded-full bg-neutral-900 ring-0 transition-transform ${showRecognizedSpeech ? "translate-x-6" : "translate-x-1"}`}
-                        />
-                      </button>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setFadeMode("none")}
+                          className={`px-3 py-1.5 text-sm font-medium transition-colors ${
+                            fadeMode === "none"
+                              ? "bg-white text-neutral-900"
+                              : "bg-neutral-700 text-neutral-300 hover:bg-neutral-600"
+                          }`}
+                        >
+                          None
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setFadeMode("words")}
+                          className={`px-3 py-1.5 text-sm font-medium transition-colors ${
+                            fadeMode === "words"
+                              ? "bg-white text-neutral-900"
+                              : "bg-neutral-700 text-neutral-300 hover:bg-neutral-600"
+                          }`}
+                        >
+                          Words
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setFadeMode("lines")}
+                          className={`px-3 py-1.5 text-sm font-medium transition-colors ${
+                            fadeMode === "lines"
+                              ? "bg-white text-neutral-900"
+                              : "bg-neutral-700 text-neutral-300 hover:bg-neutral-600"
+                          }`}
+                        >
+                          Lines
+                        </button>
+                      </div>
                     </div>
+
                     <div className="flex flex-col gap-2 md:flex-row md:gap-6 md:justify-between md:items-center">
                       <label className="flex gap-1.5 items-center font-bold text-neutral-300 shrink-0">
                         LOOKAHEAD
@@ -1411,6 +1595,24 @@ export default function Teleprompter() {
                           style={{ accentColor: "#a3a3a3" }}
                         />
                       </div>
+                    </div>
+
+                    <div className="flex flex-row gap-2 justify-between items-center md:gap-6">
+                      <span className="font-bold text-neutral-300 shrink-0">
+                        TRANSCRIPT
+                      </span>
+                      <button
+                        type="button"
+                        id="show-recognized-speech"
+                        role="switch"
+                        aria-checked={showRecognizedSpeech}
+                        onClick={() => setShowRecognizedSpeech((v) => !v)}
+                        className={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors focus:outline-none ${showRecognizedSpeech ? "bg-white" : "bg-neutral-600"}`}
+                      >
+                        <span
+                          className={`pointer-events-none inline-block h-5 w-5 shrink-0 rounded-full bg-neutral-900 ring-0 transition-transform ${showRecognizedSpeech ? "translate-x-6" : "translate-x-1"}`}
+                        />
+                      </button>
                     </div>
                   </>
                 )}
@@ -1626,6 +1828,7 @@ export default function Teleprompter() {
                   spokenWordCount={spokenWordCount}
                   nextUnreadWordRef={nextUnreadWordRef}
                   onWordClick={handleWordClick}
+                  fadeMode={fadeMode}
                 />
               </div>
             ) : (
