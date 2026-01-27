@@ -199,14 +199,133 @@ function normalizeWord(w: string): string {
   return w.toLowerCase().replace(/[^\w]/g, "");
 }
 
+/** Common words that shouldn't drive position changes on their own */
+const COMMON_WORDS = new Set([
+  "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for",
+  "of", "with", "by", "from", "as", "is", "was", "are", "were", "been",
+  "be", "have", "has", "had", "do", "does", "did", "will", "would", "could",
+  "should", "may", "might", "must", "shall", "can", "need", "it", "its",
+  "this", "that", "these", "those", "i", "you", "he", "she", "we", "they",
+  "my", "your", "his", "her", "our", "their", "me", "him", "us", "them",
+]);
+
+/**
+ * Improved matching algorithm that's more forgiving of natural speech variations.
+ * 
+ * Strategy:
+ * 1. Match words sequentially, but allow skipping common words in the script
+ * 2. Track consecutive matches - require 2+ consecutive distinctive word matches to advance
+ * 3. Only move forward, never backward (monotonic)
+ * 4. Be tolerant of slight word variations
+ */
+function findPositionWithSmartMatching(
+  spokenWords: string[],
+  scriptWords: string[],
+  currentPosition: number,
+  lookahead: number
+): number {
+  if (spokenWords.length === 0 || scriptWords.length === 0) {
+    return currentPosition;
+  }
+
+  const searchStart = currentPosition;
+  const searchEnd = Math.min(scriptWords.length, currentPosition + lookahead);
+  
+  // Normalize all words for comparison
+  const normalizedScript = scriptWords.map(normalizeWord);
+  const normalizedSpoken = spokenWords.map(normalizeWord);
+  
+  // Use recent spoken words (last ~20 words of transcript)
+  const recentSpoken = normalizedSpoken.slice(-20);
+  
+  let bestPosition = currentPosition;
+  
+  // Sliding window: try to find where in the script the recent speech matches
+  // Look for runs of matching words
+  for (let scriptIdx = searchStart; scriptIdx < searchEnd; scriptIdx++) {
+    let matchCount = 0;
+    let distinctiveMatches = 0;
+    let spokenIdx = 0;
+    let lastMatchScriptIdx = scriptIdx;
+    
+    // Try to match spoken words starting from this script position
+    for (let si = scriptIdx; si < searchEnd && spokenIdx < recentSpoken.length; ) {
+      const scriptWord = normalizedScript[si];
+      const spokenWord = recentSpoken[spokenIdx];
+      
+      if (scriptWord === spokenWord) {
+        // Direct match
+        matchCount++;
+        if (!COMMON_WORDS.has(scriptWord) && scriptWord.length > 2) {
+          distinctiveMatches++;
+        }
+        lastMatchScriptIdx = si;
+        si++;
+        spokenIdx++;
+      } else if (COMMON_WORDS.has(scriptWord)) {
+        // Script has a common word the speaker might have skipped, try skipping it
+        si++;
+      } else if (COMMON_WORDS.has(spokenWord)) {
+        // Speaker said a common word not in script (filler), skip it
+        spokenIdx++;
+      } else {
+        // Mismatch on distinctive words - break this run
+        break;
+      }
+    }
+    
+    // If we found a good run with distinctive matches, use it
+    if (distinctiveMatches >= 1 && matchCount >= 2) {
+      const candidatePosition = lastMatchScriptIdx + 1;
+      if (candidatePosition > bestPosition) {
+        bestPosition = candidatePosition;
+      }
+    }
+  }
+  
+  // Fallback: if no good phrase match, try finding the last distinctive spoken word
+  if (bestPosition === currentPosition && recentSpoken.length > 0) {
+    // Look for any distinctive word from recent speech
+    for (let i = recentSpoken.length - 1; i >= Math.max(0, recentSpoken.length - 8); i--) {
+      const word = recentSpoken[i];
+      if (!COMMON_WORDS.has(word) && word.length > 3) {
+        // Find this word in the script window
+        for (let j = searchStart; j < searchEnd; j++) {
+          if (normalizedScript[j] === word) {
+            const candidatePosition = j + 1;
+            if (candidatePosition > bestPosition) {
+              bestPosition = candidatePosition;
+            }
+            break; // Take first match
+          }
+        }
+        if (bestPosition > currentPosition) break;
+      }
+    }
+  }
+
+  // Ensure we never go backward
+  return Math.max(currentPosition, bestPosition);
+}
+
+/** Check if we have a Deepgram API key configured (local dev) */
+const DEEPGRAM_API_KEY_LOCAL = import.meta.env.VITE_DEEPGRAM_API_KEY as string | undefined;
+
+/** Check if we're in production (Vercel) - API endpoint will provide the key */
+const IS_PRODUCTION = import.meta.env.PROD;
+
+/** Voice is always supported - we'll use API endpoint in prod or local key in dev */
 const VOICE_SUPPORTED =
   typeof window !== "undefined" &&
-  (window.SpeechRecognition != null || window.webkitSpeechRecognition != null);
+  (IS_PRODUCTION || DEEPGRAM_API_KEY_LOCAL || window.SpeechRecognition != null || window.webkitSpeechRecognition != null);
+
+/** Use Deepgram if we have a local key OR we're in production (API will provide key) */
+const USE_DEEPGRAM = !!(DEEPGRAM_API_KEY_LOCAL || IS_PRODUCTION);
 
 /** Default lookahead words for voice matching. */
-const DEFAULT_VOICE_LOOKAHEAD_WORDS = 12;
+const DEFAULT_VOICE_LOOKAHEAD_WORDS = 50;
 /** Max new words we can mark as spoken in a single recognition result. */
-const VOICE_MAX_ADVANCE_PER_RESULT = 20;
+const VOICE_MAX_ADVANCE_PER_RESULT = 30;
 
 export default function Teleprompter() {
   const [isPlaying, setIsPlaying] = useState(false);
@@ -225,7 +344,9 @@ export default function Teleprompter() {
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [recognizedTranscript, setRecognizedTranscript] = useState("");
   const [showRecognizedSpeech, setShowRecognizedSpeech] = useState(true);
-  const [voiceLookahead, setVoiceLookahead] = useState(DEFAULT_VOICE_LOOKAHEAD_WORDS);
+  const [voiceLookahead, setVoiceLookahead] = useState(
+    DEFAULT_VOICE_LOOKAHEAD_WORDS,
+  );
   const [mobileBottomInset, setMobileBottomInset] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
 
@@ -323,6 +444,12 @@ export default function Teleprompter() {
   const scriptWordsRef = useRef<string[]>([]);
   const sentenceEndGlobalIndexRef = useRef<number[]>([]);
   const voiceLookaheadRef = useRef(DEFAULT_VOICE_LOOKAHEAD_WORDS);
+  
+  // Deepgram refs
+  const deepgramSocketRef = useRef<WebSocket | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const deepgramTranscriptRef = useRef<string>("");
 
   const { sentences } = useMemo(
     () => parseContentToSentences(content),
@@ -418,20 +545,224 @@ export default function Teleprompter() {
     };
   }, [isPlaying, mode]);
 
+  // Process transcript and update position
+  const processTranscript = useCallback((transcript: string, isFinal: boolean) => {
+    const scriptWords = scriptWordsRef.current;
+    if (scriptWords.length === 0) return;
+
+    const spokenWords = transcript.split(/\s+/).filter(Boolean);
+    if (spokenWords.length === 0) return;
+
+    setSpokenWordCount((current) => {
+      const newPosition = findPositionWithSmartMatching(
+        spokenWords,
+        scriptWords,
+        current,
+        voiceLookaheadRef.current,
+      );
+
+      // Cap how much we can advance per result to prevent huge jumps
+      const maxAdvance = isFinal ? VOICE_MAX_ADVANCE_PER_RESULT : Math.floor(VOICE_MAX_ADVANCE_PER_RESULT / 2);
+      const capped = Math.min(newPosition, current + maxAdvance);
+      spokenCountRef.current = capped;
+
+      console.log("[Voice] processTranscript", {
+        words: spokenWords.slice(-5).join(" "),
+        isFinal,
+        currentPos: current,
+        newPos: newPosition,
+        capped,
+      });
+
+      return capped;
+    });
+  }, []);
+
+  // Deepgram voice recognition
   useEffect(() => {
-    console.log("[Voice] effect run", {
+    if (mode !== "voice" || !isPlaying || !USE_DEEPGRAM) {
+      // Cleanup Deepgram if it was running
+      if (deepgramSocketRef.current) {
+        deepgramSocketRef.current.close();
+        deepgramSocketRef.current = null;
+      }
+      if (mediaRecorderRef.current) {
+        mediaRecorderRef.current.stop();
+        mediaRecorderRef.current = null;
+      }
+      if (mediaStreamRef.current) {
+        mediaStreamRef.current.getTracks().forEach(track => track.stop());
+        mediaStreamRef.current = null;
+      }
+      deepgramTranscriptRef.current = "";
+      return;
+    }
+
+    console.log("[Deepgram] Starting...");
+    let isActive = true;
+
+    const startDeepgram = async () => {
+      try {
+        // Get Deepgram credentials - either from local env or API endpoint
+        let apiKey = DEEPGRAM_API_KEY_LOCAL;
+        let wsUrl = 'wss://api.deepgram.com/v1/listen?model=nova-2&punctuate=true&interim_results=true&endpointing=200';
+        
+        if (!apiKey && IS_PRODUCTION) {
+          // Fetch token from our API endpoint
+          console.log("[Deepgram] Fetching token from API...");
+          try {
+            const response = await fetch('/api/deepgram');
+            if (!response.ok) {
+              const error = await response.json().catch(() => ({ error: 'Failed to get Deepgram credentials' }));
+              throw new Error(error.error || 'Failed to get Deepgram credentials');
+            }
+            const data = await response.json();
+            apiKey = data.token;
+            if (data.url) wsUrl = data.url;
+          } catch (fetchErr) {
+            console.error("[Deepgram] Failed to fetch token:", fetchErr);
+            throw new Error("Could not connect to voice service. Please try again.");
+          }
+        }
+
+        if (!apiKey) {
+          throw new Error("Deepgram API key not configured");
+        }
+
+        if (!isActive) return;
+
+        // Get microphone access
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+          } 
+        });
+        
+        if (!isActive) {
+          stream.getTracks().forEach(track => track.stop());
+          return;
+        }
+        
+        mediaStreamRef.current = stream;
+
+        // Connect to Deepgram WebSocket
+        const socket = new WebSocket(wsUrl, ["token", apiKey]);
+
+        socket.onopen = () => {
+          console.log("[Deepgram] WebSocket connected");
+          if (!isActive) {
+            socket.close();
+            return;
+          }
+          
+          deepgramSocketRef.current = socket;
+          deepgramTranscriptRef.current = "";
+
+          // Start MediaRecorder to capture audio
+          const mediaRecorder = new MediaRecorder(stream, {
+            mimeType: MediaRecorder.isTypeSupported('audio/webm;codecs=opus') 
+              ? 'audio/webm;codecs=opus' 
+              : 'audio/webm'
+          });
+          
+          mediaRecorder.ondataavailable = (event) => {
+            if (event.data.size > 0 && socket.readyState === WebSocket.OPEN) {
+              socket.send(event.data);
+            }
+          };
+
+          mediaRecorder.start(100); // Send data every 100ms
+          mediaRecorderRef.current = mediaRecorder;
+          console.log("[Deepgram] MediaRecorder started");
+        };
+
+        socket.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            const transcript = data.channel?.alternatives?.[0]?.transcript;
+            const isFinal = data.is_final;
+            
+            if (transcript) {
+              if (isFinal) {
+                // Append final transcript
+                deepgramTranscriptRef.current += " " + transcript;
+                const fullTranscript = deepgramTranscriptRef.current.trim();
+                setRecognizedTranscript(fullTranscript);
+                processTranscript(fullTranscript, true);
+              } else {
+                // Show interim result
+                const displayTranscript = (deepgramTranscriptRef.current + " " + transcript).trim();
+                setRecognizedTranscript(displayTranscript);
+                // Also process interim for faster tracking
+                processTranscript(displayTranscript, false);
+              }
+            }
+          } catch (e) {
+            console.error("[Deepgram] Failed to parse message:", e);
+          }
+        };
+
+        socket.onerror = (error) => {
+          console.error("[Deepgram] WebSocket error:", error);
+          setVoiceError("Deepgram connection error. Check your API key.");
+          setIsPlaying(false);
+        };
+
+        socket.onclose = (event) => {
+          console.log("[Deepgram] WebSocket closed", event.code, event.reason);
+          if (isActive && event.code !== 1000) {
+            // Abnormal closure
+            setVoiceError("Deepgram connection closed unexpectedly.");
+          }
+        };
+
+      } catch (err) {
+        console.error("[Deepgram] Setup error:", err);
+        if (err instanceof Error && err.name === "NotAllowedError") {
+          setVoiceError("Microphone access denied");
+        } else {
+          setVoiceError(err instanceof Error ? err.message : "Could not start microphone");
+        }
+        setIsPlaying(false);
+      }
+    };
+
+    startDeepgram();
+    setVoiceError(null);
+
+    return () => {
+      console.log("[Deepgram] Cleanup");
+      isActive = false;
+      if (deepgramSocketRef.current) {
+        deepgramSocketRef.current.close();
+        deepgramSocketRef.current = null;
+      }
+      if (mediaRecorderRef.current) {
+        try {
+          mediaRecorderRef.current.stop();
+        } catch { /* ignore */ }
+        mediaRecorderRef.current = null;
+      }
+      if (mediaStreamRef.current) {
+        mediaStreamRef.current.getTracks().forEach(track => track.stop());
+        mediaStreamRef.current = null;
+      }
+    };
+  }, [mode, isPlaying, processTranscript]);
+
+  // Fallback: Browser Speech Recognition (when Deepgram not configured)
+  useEffect(() => {
+    if (USE_DEEPGRAM) return; // Skip if using Deepgram
+    
+    console.log("[Voice] Browser Speech API effect run", {
       mode,
       isPlaying,
       VOICE_SUPPORTED,
       flatWordsLength: flatWords.length,
     });
+    
     if (mode !== "voice" || !isPlaying || !VOICE_SUPPORTED) {
-      console.log("[Voice] skipping start — will stop if was running", {
-        mode,
-        isPlaying,
-        VOICE_SUPPORTED,
-        flatWordsLength: flatWords.length,
-      });
       if (recognitionRef.current) {
         try {
           recognitionRef.current.stop();
@@ -455,79 +786,44 @@ export default function Teleprompter() {
     recognition.lang = "en-US";
     recognitionRef.current = recognition;
     fatalErrorRef.current = false;
-    console.log("[Voice] recognition created, starting…", {
-      totalWords: flatWords.length,
-      sentenceEnds: sentenceEndGlobalIndices,
-    });
 
     recognition.onresult = (event: SpeechRecognitionEvent) => {
-      let fullTranscript = "";
+      let finalTranscript = "";
+      let interimTranscript = "";
+
       for (let i = 0; i < event.results.length; i++) {
         const r = event.results[i];
-        if (r.isFinal && r.length > 0) {
-          fullTranscript += (r[0] as { transcript: string }).transcript + " ";
-        }
-      }
-      const last = event.results[event.results.length - 1];
-      if (last && !last.isFinal && last.length > 0) {
-        fullTranscript += (last[0] as { transcript: string }).transcript;
-      }
-      const text = fullTranscript.trim();
-      setRecognizedTranscript(text);
-      if (!text) return;
-      
-      const scriptWords = scriptWordsRef.current;
-      if (scriptWords.length === 0) return;
-      const spoken = text
-        .split(/\s+/)
-        .map((w) => normalizeWord(w))
-        .filter(Boolean);
-      // Always match from the start of the script so the same transcript => same position.
-      // Otherwise we'd re-use transcript words (e.g. "The", "the") to match later script
-      // words and advance too far. Lookahead limits how far each transcript word can reach.
-      let idx = 0;
-      for (const word of spoken) {
-        const limit = Math.min(scriptWords.length, idx + voiceLookaheadRef.current);
-        let found = -1;
-        for (let j = idx; j < limit; j++) {
-          if (normalizeWord(scriptWords[j]) === word) {
-            found = j;
-            break;
+        if (r.length > 0) {
+          const text = (r[0] as { transcript: string }).transcript;
+          if (r.isFinal) {
+            finalTranscript += text + " ";
+          } else {
+            interimTranscript += text;
           }
         }
-        if (found >= 0) idx = found + 1;
       }
-      setSpokenWordCount((current) => {
-        const capped = Math.min(idx, current + VOICE_MAX_ADVANCE_PER_RESULT);
-        spokenCountRef.current = capped;
-        console.log("[Voice] onresult", {
-          transcript: text.slice(0, 60),
-          spokenTokens: spoken.length,
-          rawMatched: idx,
-          capped,
-          startIdx: current,
-        });
-        return capped;
-      });
+
+      const displayText = (finalTranscript + interimTranscript).trim();
+      setRecognizedTranscript(displayText);
+
+      const trackingText = finalTranscript.trim();
+      if (trackingText) {
+        processTranscript(trackingText, true);
+      }
     };
 
     recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
-      console.log("[Voice] onerror", {
-        error: event.error,
-        message: event.message,
-      });
+      console.log("[Voice] onerror", { error: event.error, message: event.message });
       if (event.error === "not-allowed") {
         setVoiceError("Microphone access denied");
         setIsPlaying(false);
       } else if (event.error === "network") {
         fatalErrorRef.current = true;
         setVoiceError(
-          "Speech service unreachable. This often means an ad blocker or privacy extension is blocking it. Try a private window, disable extensions, or use another browser (e.g. Safari uses on-device recognition).",
+          "Speech service unreachable. Consider adding a Deepgram API key for better results.",
         );
         setIsPlaying(false);
-      } else if (event.error === "no-speech") {
-        /* ignore — safe to restart on onend */
-      } else {
+      } else if (event.error !== "no-speech") {
         fatalErrorRef.current = true;
         setVoiceError(event.error ?? "Speech recognition error");
         setIsPlaying(false);
@@ -535,48 +831,30 @@ export default function Teleprompter() {
     };
 
     recognition.onend = () => {
-      console.log("[Voice] onend", {
-        stillActive: recognitionRef.current === recognition,
-        hadFatalError: fatalErrorRef.current,
-      });
       if (fatalErrorRef.current) return;
-      if (
-        recognitionRef.current === recognition &&
-        mode === "voice" &&
-        isPlaying
-      ) {
+      if (recognitionRef.current === recognition && mode === "voice" && isPlaying) {
         try {
           recognition.start();
-          console.log("[Voice] restarted after onend");
-        } catch {
-          /* ignore */
-        }
+        } catch { /* ignore */ }
       }
     };
 
     setVoiceError(null);
     try {
       recognition.start();
-      console.log("[Voice] recognition.start() called");
     } catch (e) {
-      console.error("[Voice] recognition.start() threw", e);
-      setVoiceError(
-        e instanceof Error ? e.message : "Could not start microphone",
-      );
+      setVoiceError(e instanceof Error ? e.message : "Could not start microphone");
     }
 
     return () => {
-      console.log("[Voice] cleanup — stopping recognition");
       try {
         recognition.stop();
-      } catch {
-        /* ignore */
-      }
+      } catch { /* ignore */ }
       if (recognitionRef.current === recognition) {
         recognitionRef.current = null;
       }
     };
-  }, [mode, isPlaying, flatWords.length]);
+  }, [mode, isPlaying, flatWords.length, processTranscript]);
 
   useEffect(() => {
     if (
@@ -837,7 +1115,8 @@ export default function Teleprompter() {
                             className="text-neutral-500 hover:text-neutral-300 cursor-help"
                           />
                           <span className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 px-3 py-2 text-sm font-normal text-neutral-200 bg-neutral-800 rounded shadow-lg whitespace-nowrap opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto transition-opacity z-50">
-                            How many words ahead to search when matching your speech to the script
+                            How many words ahead to search when matching your
+                            speech to the script
                           </span>
                         </span>
                       </label>
@@ -853,7 +1132,9 @@ export default function Teleprompter() {
                           min="4"
                           max="30"
                           value={voiceLookahead}
-                          onChange={(e) => setVoiceLookahead(Number(e.target.value))}
+                          onChange={(e) =>
+                            setVoiceLookahead(Number(e.target.value))
+                          }
                           className="flex-1 min-w-0 h-1 appearance-none bg-neutral-600"
                           style={{ accentColor: "#a3a3a3" }}
                         />
