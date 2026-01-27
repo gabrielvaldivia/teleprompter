@@ -335,7 +335,7 @@ export default function Teleprompter() {
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [recognizedTranscript, setRecognizedTranscript] = useState("");
   const [showRecognizedSpeech, setShowRecognizedSpeech] = useState(true);
-  const [fadeMode, setFadeMode] = useState<"none" | "words" | "lines">("words");
+  const [fadeMode, setFadeMode] = useState<"none" | "words" | "lines">("lines");
   const [speechProvider, setSpeechProvider] = useState<
     "auto" | "deepgram" | "webspeech"
   >("auto");
